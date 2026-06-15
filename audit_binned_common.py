@@ -22,44 +22,134 @@ participants_dates = {
 }
 
 
-def get_schedule_expected_bins(schedule_path, total_days):
-    # Compute the number of 5-minute bins a schedule should produce for a given number of tracked days, excluding DELETE rows
-    if not os.path.exists(schedule_path) or total_days == 0:
-        return 0
-    sched = pd.read_csv(schedule_path)
-    sched = sched[sched["Class"].str.strip() != "DELETE"].copy()
-
-    total_bins = 0
-    for _, row in sched.iterrows():
-        start = pd.to_datetime(row["TimeStart"], format="%H:%M:%S")
-        end = pd.to_datetime(row["TimeEnd"], format="%H:%M:%S")
-        minutes = (end - start).total_seconds() / 60.0
-        total_bins += int(np.ceil(minutes / 5.0))
-    return total_bins * total_days
-
-
 def time_to_seconds(t):
-    # Normalize a time value to seconds since midnight so time-range checks are simplified
+    # Normalize a time value to seconds since midnight so time-range checks are simplified.
     return t.hour * 3600 + t.minute * 60 + t.second
 
 
-def run_binned_audit(metric_label, type_token, valid_min=None, valid_max=None):
+def load_schedule(schedule_path):
+    # Read one of the saved class schedules and normalize it into a compact table.
+    if not os.path.exists(schedule_path):
+        return pd.DataFrame(columns=["Class", "TimeStart", "TimeEnd", "StartSec", "EndSec"])
+
+    sched = pd.read_csv(schedule_path)
+    required_cols = {"Class", "TimeStart", "TimeEnd"}
+    if not required_cols.issubset(sched.columns):
+        return pd.DataFrame(columns=["Class", "TimeStart", "TimeEnd", "StartSec", "EndSec"])
+
+    sched = sched.copy()
+    sched["Class"] = sched["Class"].fillna("").astype(str).str.strip()
+    sched = sched[sched["Class"] != "DELETE"].copy()
+    sched["StartTime"] = pd.to_datetime(sched["TimeStart"], format="%H:%M:%S", errors="coerce")
+    sched["EndTime"] = pd.to_datetime(sched["TimeEnd"], format="%H:%M:%S", errors="coerce")
+    sched = sched.dropna(subset=["StartTime", "EndTime"]).copy()
+    sched["StartSec"] = sched["StartTime"].dt.hour * 3600 + sched["StartTime"].dt.minute * 60 + sched["StartTime"].dt.second
+    sched["EndSec"] = sched["EndTime"].dt.hour * 3600 + sched["EndTime"].dt.minute * 60 + sched["EndTime"].dt.second
+    return sched
+
+
+def build_schedule_bins_for_day(schedule_df, day_str):
+    # Expand each class period into concrete 5-minute bins for one specific school day.
+    base_day = pd.Timestamp(day_str).tz_localize("US/Pacific")
+    bin_starts = []
+    bin_ends = []
+
+    for _, row in schedule_df.iterrows():
+        start_dt = base_day + pd.Timedelta(seconds=int(row["StartSec"]))
+        end_dt = base_day + pd.Timedelta(seconds=int(row["EndSec"]))
+        if end_dt <= start_dt:
+            continue
+
+        current = start_dt
+        while current < end_dt:
+            next_edge = min(current + pd.Timedelta(minutes=5), end_dt)
+            bin_starts.append(current.value)
+            bin_ends.append(next_edge.value)
+            current = next_edge
+
+    return np.array(bin_starts, dtype="int64"), np.array(bin_ends, dtype="int64")
+
+
+def get_schedule_expected_bins(schedule_path, total_days):
+    # Compute the number of 5-minute bins a schedule should produce for a given number of tracked days, excluding DELETE rows.
+    if not os.path.exists(schedule_path) or total_days == 0:
+        return 0
+
+    sched = load_schedule(schedule_path)
+    if sched.empty:
+        return 0
+
+    total_bins = 0
+    for _, row in sched.iterrows():
+        start_dt = pd.Timestamp("2000-01-01").tz_localize("US/Pacific") + pd.Timedelta(seconds=int(row["StartSec"]))
+        end_dt = pd.Timestamp("2000-01-01").tz_localize("US/Pacific") + pd.Timedelta(seconds=int(row["EndSec"]))
+        if end_dt <= start_dt:
+            continue
+
+        current = start_dt
+        while current < end_dt:
+            next_edge = min(current + pd.Timedelta(minutes=5), end_dt)
+            total_bins += 1
+            current = next_edge
+
+    return total_bins * total_days
+
+
+def parse_metric_timestamps(metric_df):
+    # Parse timestamps as UTC first so mixed timezone exports normalize cleanly before converting to Pacific.
+    metric_df = metric_df.copy()
+
+    start_dt = pd.to_datetime(metric_df["/Record/@startDate"], errors="coerce", utc=True).dt.tz_convert("US/Pacific")
+    if "/Record/@endDate" in metric_df.columns:
+        end_dt = pd.to_datetime(metric_df["/Record/@endDate"], errors="coerce", utc=True).dt.tz_convert("US/Pacific")
+    else:
+        end_dt = start_dt.copy()
+
+    missing_end = end_dt.isna() | (end_dt <= start_dt)
+    end_dt.loc[missing_end] = start_dt.loc[missing_end] + pd.Timedelta(microseconds=1)
+
+    metric_df["StartDT"] = start_dt
+    metric_df["EndDT"] = end_dt
+    metric_df["DateStr"] = metric_df["StartDT"].dt.strftime("%Y-%m-%d")
+
+    if "/Record/@value" in metric_df.columns:
+        metric_df["MetricValue"] = pd.to_numeric(metric_df["/Record/@value"], errors="coerce")
+    else:
+        metric_df["MetricValue"] = np.nan
+
+    return metric_df
+
+
+def count_overlapping_bins(record_start_ns, record_end_ns, bin_starts_ns, bin_ends_ns):
+    # Return every schedule bin that overlaps a record interval using half-open interval math.
+    return np.flatnonzero((record_start_ns < bin_ends_ns) & (record_end_ns > bin_starts_ns))
+
+
+def find_point_bin(point_ns, bin_starts_ns, bin_ends_ns):
+    # Place a point sample into exactly one bin using half-open bin boundaries.
+    matches = np.flatnonzero((bin_starts_ns <= point_ns) & (point_ns < bin_ends_ns))
+    if matches.size == 0:
+        return None
+    return int(matches[0])
+
+
+def run_binned_audit(metric_label, type_token, valid_min=None, valid_max=None, mode="interval"):
     total_sample_expected_bins = 0
     total_sample_observed_bins = 0
     total_sample_valid_bins = 0
     processed_participants = 0
 
     for pNum, assigned_dates in participants_dates.items():
-        # Skip participants whose exported raw file is missing
+        # Skip participants whose exported raw file is missing.
         raw_path = os.path.join(EXPORTS_DIR, f"P0{pNum}export.csv")
         if not os.path.exists(raw_path):
             continue
 
-        # Count how many dates are on Friday versus Monday-Thursday
+        # Count how many dates are on Friday versus Monday-Thursday.
         fridays_count = sum(1 for d in assigned_dates if pd.to_datetime(d).strftime("%A") == "Friday")
         other_days_count = len(assigned_dates) - fridays_count
 
-        # Participants 04 and 05 share one schedule pair; the rest use the shared schedule pair
+        # Participants 04 and 05 share one schedule pair; the rest use the shared schedule pair.
         if pNum in ["04", "05"]:
             fri_path = os.path.join(EXPORTS_DIR, "schedData_P(04,05)_Fr.csv")
             oth_path = os.path.join(EXPORTS_DIR, "schedData_P(04,05)_M-Th.csv")
@@ -67,15 +157,14 @@ def run_binned_audit(metric_label, type_token, valid_min=None, valid_max=None):
             fri_path = os.path.join(EXPORTS_DIR, "schedData_P(01,02,03,06,07,08,09,12,14,16)_FR.csv")
             oth_path = os.path.join(EXPORTS_DIR, "schedData_P(01,02,03,06,07,08,09,12,14,16)_M-TH.csv")
 
-        # Expected bins from the schedule definition, scaled by the number of tracked Friday and non-Friday dates for this participant
+        sched_fri = load_schedule(fri_path)
+        sched_oth = load_schedule(oth_path)
+
+        # Expected bins from the actual schedule bin layout, scaled by tracked Friday and non-Friday dates.
         user_expected_bins = get_schedule_expected_bins(fri_path, fridays_count) + get_schedule_expected_bins(oth_path, other_days_count)
         total_sample_expected_bins += user_expected_bins
 
-        # Load the schedule tables once
-        sched_fri = pd.read_csv(fri_path) if os.path.exists(fri_path) else pd.DataFrame()
-        sched_oth = pd.read_csv(oth_path) if os.path.exists(oth_path) else pd.DataFrame()
-
-        # Detect the header start dynamically since the export files can contain metadata before the CSV header
+        # Detect the header start dynamically since the export files can contain metadata before the CSV header.
         skip_count = 0
         with open(raw_path, "r", encoding="utf-8", errors="ignore") as f:
             for i, line in enumerate(f):
@@ -83,78 +172,85 @@ def run_binned_audit(metric_label, type_token, valid_min=None, valid_max=None):
                     skip_count = i
                     break
 
-        # Read the export after the metadata block
+        # Read the export after the metadata block.
         df = pd.read_csv(raw_path, skiprows=skip_count, low_memory=False)
 
+        user_observed_bins = 0
+        user_valid_bins = 0
+
         if "/Record/@type" in df.columns and "/Record/@startDate" in df.columns:
-            # Keep only the requested record type from the export
-            metric_df = df[df["/Record/@type"].str.contains(type_token, na=False, case=False)].copy()
+            # Keep only the requested record type from the export.
+            metric_df = df[df["/Record/@type"].astype(str).str.contains(type_token, na=False, case=False)].copy()
 
             if not metric_df.empty:
-                # Parse timestamps and convert them to the target timezone
-                metric_df["ParsedDT"] = pd.to_datetime(metric_df["/Record/@startDate"], errors="coerce")
-                metric_df = metric_df.dropna(subset=["ParsedDT"])
+                metric_df = parse_metric_timestamps(metric_df)
+                metric_df = metric_df.dropna(subset=["StartDT", "EndDT", "DateStr"])
 
-                try:
-                    metric_df["ParsedDT"] = metric_df["ParsedDT"].dt.tz_convert("US/Pacific")
-                except TypeError:
-                    # Localize exports as UTC before converting to Pacific time
-                    metric_df["ParsedDT"] = metric_df["ParsedDT"].dt.tz_localize("UTC").dt.tz_convert("US/Pacific")
-
-                # Get helper columns used for date filtering and 5-minute binning
-                metric_df["DateStr"] = metric_df["ParsedDT"].dt.strftime("%Y-%m-%d")
-                metric_df["5MinBlock"] = metric_df["ParsedDT"].dt.floor("5min")
-                metric_df["TimeSec"] = metric_df["ParsedDT"].dt.time.apply(time_to_seconds)
-
-                # Only analyze records that fall on dates assigned to the participant
+                # Only analyze records that fall on dates assigned to the participant.
                 tracking_days_df = metric_df[metric_df["DateStr"].isin(assigned_dates)].copy()
 
                 observed_blocks = set()
                 valid_blocks = set()
 
                 for date_str, group in tracking_days_df.groupby("DateStr"):
-                    # Pick the correct weekday schedule for the current date
+                    # Pick the correct weekday schedule for the current date.
                     day_of_week = pd.to_datetime(date_str).strftime("%A")
                     current_sched = sched_fri if day_of_week == "Friday" else sched_oth
-                    current_sched = current_sched[current_sched["Class"].str.strip() != "DELETE"]
-
                     if current_sched.empty:
                         continue
 
-                    # Convert class start/end times once per day
-                    start_secs = pd.to_datetime(current_sched["TimeStart"], format="%H:%M:%S").dt.time.apply(time_to_seconds).values
-                    end_secs = pd.to_datetime(current_sched["TimeEnd"], format="%H:%M:%S").dt.time.apply(time_to_seconds).values
+                    bin_starts_ns, bin_ends_ns = build_schedule_bins_for_day(current_sched, date_str)
+                    if len(bin_starts_ns) == 0:
+                        continue
 
                     for _, row in group.iterrows():
-                        row_sec = row["TimeSec"]
+                        if mode == "point" or mode == "event":
+                            # Point and event metrics are assigned to the single bin containing the record start time.
+                            bin_idx = find_point_bin(row["StartDT"].value, bin_starts_ns, bin_ends_ns)
+                            if bin_idx is None:
+                                continue
 
-                        # Count only records that occur during a scheduled class window
-                        if any((start <= row_sec <= end) for start, end in zip(start_secs, end_secs)):
-                            observed_blocks.add(row["5MinBlock"])
+                            bin_start_ns = int(bin_starts_ns[bin_idx])
+                            observed_blocks.add(bin_start_ns)
 
-                            # A block is considered valid only if the value is numeric and falls in the expected range
-                            metric_val = pd.to_numeric(row.get("/Record/@value"), errors="coerce")
-                            if pd.notna(metric_val):
-                                if valid_min is not None and metric_val < valid_min:
-                                    continue
-                                if valid_max is not None and metric_val > valid_max:
-                                    continue
-                                valid_blocks.add(row["5MinBlock"])
+                            metric_val = row["MetricValue"]
+                            if pd.isna(metric_val):
+                                continue
+                            if valid_min is not None and metric_val < valid_min:
+                                continue
+                            if valid_max is not None and metric_val > valid_max:
+                                continue
+                            valid_blocks.add(bin_start_ns)
+                            continue
 
-                # Prevent a participant from reporting more observed/valid blocks than the schedule allows
-                user_observed_bins = len(observed_blocks)
-                if user_observed_bins > user_expected_bins:
-                    user_observed_bins = user_expected_bins
+                        # Interval metrics can cover multiple bins, so collect every overlapping bin.
+                        start_ns = row["StartDT"].value
+                        end_ns = row["EndDT"].value
+                        overlapping_bins = count_overlapping_bins(start_ns, end_ns, bin_starts_ns, bin_ends_ns)
+                        if overlapping_bins.size == 0:
+                            continue
 
-                user_valid_bins = len(valid_blocks)
-                if user_valid_bins > user_observed_bins:
-                    user_valid_bins = user_observed_bins
+                        overlapping_bin_starts = bin_starts_ns[overlapping_bins].tolist()
+                        observed_blocks.update(overlapping_bin_starts)
 
-                total_sample_observed_bins += user_observed_bins
-                total_sample_valid_bins += user_valid_bins
-                processed_participants += 1
+                        metric_val = row["MetricValue"]
+                        if pd.isna(metric_val):
+                            continue
+                        if valid_min is not None and metric_val < valid_min:
+                            continue
+                        if valid_max is not None and metric_val > valid_max:
+                            continue
+                        valid_blocks.update(overlapping_bin_starts)
 
-    # Final summary is shown as averages per processed participant, along with an overall coverage percentage for the entire sample
+                # Clamp counts so a malformed export cannot report more bins than the schedule defines.
+                user_observed_bins = min(len(observed_blocks), user_expected_bins)
+                user_valid_bins = min(len(valid_blocks), user_observed_bins)
+
+        total_sample_observed_bins += user_observed_bins
+        total_sample_valid_bins += user_valid_bins
+        processed_participants += 1
+
+    # Final summary is shown as averages per processed participant, along with an overall coverage percentage for the entire sample.
     if processed_participants > 0:
         avg_expected = total_sample_expected_bins / processed_participants
         avg_observed = total_sample_observed_bins / processed_participants
@@ -166,7 +262,8 @@ def run_binned_audit(metric_label, type_token, valid_min=None, valid_max=None):
 
         prefix = f"{metric_label} " if metric_label else ""
 
-        print(f"{prefix}Expected (5-Min Bins): {avg_expected:,.1f} bins")
-        print(f"{prefix}Observed (5-Min Bins): {avg_observed:,.1f} bins")
-        print(f"{prefix}Valid (5-Min Bins): {avg_valid:,.1f} bins")
+        print(f"{prefix}Expected (5-Min Bins): {round(avg_expected):,d} bins")
+        print(f"{prefix}Observed (5-Min Bins): {round(avg_observed):,d} bins")
+        print(f"{prefix}Valid (5-Min Bins): {round(avg_valid):,d} bins")
+        print(f"{prefix}Invalid (5-Min Bins): {round(max(avg_observed - avg_valid, 0)):,d} bins")
         print(f"{prefix}Coverage: {global_coverage_percentage:.2f}%")

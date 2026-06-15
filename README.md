@@ -6,10 +6,10 @@ Data calculation scripts for the HyperSense research project.
 
 All scripts read participant exports from `~/Downloads/Exports` and use the same participant/date schedule data and 5-minute binning logic.
 
-- `calculate_heart_rate.py` - Calculates heart-rate expected, observed, and valid 5-minute bins for tracked days.
-- `calculate_active_energy_burned.py` - Calculates active energy burned bins using the same schedule-based filtering.
-- `calculate_basal_energy_burned.py` - Calculates basal energy burned bins using the same schedule-based filtering.
-- `calculate_apple_exercise_time.py` - Calculates Apple Exercise Time bins using the same schedule-based filtering.
+- `calculate_heart_rate.py` - Calculates heart-rate expected, observed, valid, and invalid 5-minute bins using point-sample placement.
+- `calculate_active_energy_burned.py` - Calculates active energy burned bins by mapping datapoint intervals onto schedule bins.
+- `calculate_basal_energy_burned.py` - Calculates basal energy burned bins by mapping datapoint intervals onto schedule bins.
+- `calculate_apple_exercise_time.py` - Calculates Apple Exercise Time bins using discrete event placement.
 - `audit_binned_common.py` - Shared helper used by the calculation scripts.
 
 ## Data Layout
