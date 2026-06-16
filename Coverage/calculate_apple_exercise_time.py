@@ -1,4 +1,4 @@
-from audit_binned_common import run_binned_audit
+from Coverage.audit_binned_common import run_binned_audit
 
 
 if __name__ == "__main__":
