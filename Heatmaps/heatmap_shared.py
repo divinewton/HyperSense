@@ -537,6 +537,7 @@ def run_heatmap_suite(
 
             day_df = day_df.sort_values("timestamp")
             day_blocks = p_schedule[day_name] if p_schedule and day_name in p_schedule else []
+            is_friday = day_name == "Friday"
             weekday_bin_candidates = [
                 (start_t, end_t)
                 for start_t, end_t in time_bins_5min
@@ -549,8 +550,9 @@ def run_heatmap_suite(
                 bin_df = day_df[time_bin_mask(day_df["time_obj"], start_t, end_t)]
                 has_sample = not bin_df.empty
                 if (start_t, end_t) in weekday_bin_candidates:
-                    time_coverage_samples[interval_5].append(1 if has_sample else 0)
                     day_coverage_flags.append(1 if has_sample else 0)
+                    if not is_friday:
+                        time_coverage_samples[interval_5].append(1 if has_sample else 0)
                 if has_sample and (start_t, end_t) in weekday_bin_candidates:
                     day_valid_bins += 1
 
@@ -561,6 +563,8 @@ def run_heatmap_suite(
         if class_names and p_schedule is not None:
             for current_date, day_df in metric_df.groupby("date"):
                 day_name = pd.Timestamp(current_date).day_name()
+                if day_name == "Friday":
+                    continue
                 if day_name not in p_schedule:
                     continue
                 day_blocks = p_schedule[day_name]
@@ -609,6 +613,7 @@ def run_heatmap_suite(
                 class_coverage.loc[cls, participant] = (covered_bins / total_bins) * 100.0
 
     if not class_coverage.empty:
+        class_coverage = class_coverage.loc[(class_coverage != 0).any(axis=1)]
         class_order = class_coverage.sum(axis=1).sort_values(ascending=False).index.tolist()
         class_coverage = class_coverage.loc[class_order]
 
@@ -625,7 +630,7 @@ def run_heatmap_suite(
         vmax=100,
         figsize=(max(8, len(weekday_coverage.columns) * 0.8), 4.5),
     )
-    print(f"Caption: {metric_label} coverage by weekday. Each cell shows the percent of scheduled 5-minute bins with valid data for that participant and weekday.")
+    print(f"Caption: {metric_label} coverage by weekday. Each cell shows the percent of scheduled 5-minute bins with valid data for that participant and weekday. Friday is included in this feasibility summary.")
 
     if not class_coverage.empty:
         class_coverage.to_csv(coverage_dir / f"{metric_folder}_coverage_by_class.csv")
@@ -641,7 +646,7 @@ def run_heatmap_suite(
             vmax=100,
             figsize=(max(8, len(class_coverage.columns) * 0.8), max(4, len(class_coverage.index) * 0.5)),
         )
-        print(f"Caption: {metric_label} coverage by class. Each cell shows the percent of scheduled 5-minute bins inside that class that contained valid data for that participant.")
+        print(f"Caption: {metric_label} coverage by class. Each cell shows the percent of scheduled 5-minute bins inside that class that contained valid data for that participant. Friday is excluded from this contextual comparison.")
 
     time_coverage.to_csv(coverage_dir / f"{metric_folder}_coverage_by_time.csv")
     plot_heatmap(
@@ -656,7 +661,7 @@ def run_heatmap_suite(
         vmax=100,
         figsize=(max(8, len(time_coverage.columns) * 0.8), 7.5),
     )
-    print(f"Caption: {metric_label} coverage by 30-minute interval. Each cell shows the mean percent coverage across the 5-minute bins inside that 30-minute window.")
+    print(f"Caption: {metric_label} coverage by 30-minute interval. Each cell shows the mean percent coverage across the 5-minute bins inside that 30-minute window. Friday is excluded from this contextual comparison.")
 
     weekday_valid_points.to_csv(values_dir / f"{metric_folder}_valid_data_points_by_weekday.csv")
     plot_heatmap(
@@ -669,4 +674,4 @@ def run_heatmap_suite(
         mask_zero=False,
         figsize=(max(8, len(weekday_valid_points.columns) * 0.8), 4.5),
     )
-    print(f"Caption: {metric_label} valid data points by weekday. Each cell shows the count of valid scheduled 5-minute bins available for that participant and weekday.")
+    print(f"Caption: {metric_label} valid data points by weekday. Each cell shows the count of valid scheduled 5-minute bins available for that participant and weekday. Friday is included in this feasibility summary.")
