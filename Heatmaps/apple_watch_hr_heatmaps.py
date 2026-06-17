@@ -41,7 +41,6 @@ def main() -> None:
         metric_folder="heart_rate",
         valid_min=40,
         valid_max=180,
-        value_agg="mean",
         local_tz=args.timezone,
     )
 

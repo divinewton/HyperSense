@@ -40,7 +40,6 @@ def main() -> None:
         metric_label="Apple Exercise Time",
         metric_folder="apple_exercise_time",
         valid_min=0,
-        value_agg="sum",
         local_tz=args.timezone,
     )
 

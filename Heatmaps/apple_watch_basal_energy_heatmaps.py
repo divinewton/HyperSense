@@ -40,7 +40,6 @@ def main() -> None:
         metric_label="Basal Energy Burned",
         metric_folder="basal_energy_burned",
         valid_min=0,
-        value_agg="sum",
         local_tz=args.timezone,
     )
 
