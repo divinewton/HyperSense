@@ -12,10 +12,7 @@ The heatmap scripts default to `US/Pacific` for naive timestamps, but you can ov
 
 ## Output Layout
 
-Heatmap outputs are written under `Heatmaps/Graphs/<Datatype>/`, and each datatype folder contains two subfolders:
-
-- `Coverage/` contains the coverage figures and CSVs for weekday, class, and 30-minute time-of-day bins.
-- `Heatmaps/` contains the valid-data-points-per-weekday figure and CSV.
+Heatmap outputs are written under `Heatmaps/Graphs/<Datatype>/`, and each datatype folder contains all figures and CSVs for that datatype.
 
 ## Heatmap Scripts
 

@@ -364,7 +364,10 @@ def format_annot(matrix: pd.DataFrame) -> pd.DataFrame:
     def _format_cell(x: object) -> str:
         if pd.isna(x):
             return ""
-        return f"{x:.1f}"
+        value = float(x)
+        if value.is_integer():
+            return str(int(value))
+        return f"{value:.1f}".rstrip("0").rstrip(".")
 
     values = np.vectorize(_format_cell, otypes=[object])(matrix.to_numpy())
     return pd.DataFrame(values, index=matrix.index, columns=matrix.columns)
@@ -479,24 +482,25 @@ def run_heatmap_suite(
     local_tz: str = LOCAL_TZ,
 ) -> None:
     ensure_dir(output_dir)
-    coverage_dir = output_dir / "Coverage"
-    values_dir = output_dir / "Heatmaps"
-    ensure_dir(coverage_dir)
-    ensure_dir(values_dir)
 
+    # Find all participant folders and stop early if nothing is available.
     participant_dirs = list_participant_folders(root)
     if not participant_dirs:
         print(f"[ERROR] No participant folders found under {root}")
         return
 
+    # Load classroom schedules so class and weekday coverage can stay schedule-aware.
     schedule_map = build_schedule_map(root)
     class_names = class_labels_for_schedule(schedule_map)
 
+    # Build the fixed school-day bins used in the paper: 5-minute bins for coverage
+    # and 30-minute bins for the time-of-day summary plot.
     time_bins_5min = build_time_bins("08:30", "15:00", 5)
     time_bins_30min = build_time_bins("08:30", "15:00", 30)
     time_bin_labels_5min = overlap_bin_labels(time_bins_5min)
     time_bin_labels_30min = overlap_bin_labels(time_bins_30min)
 
+    # One row per output category and one column per participant.
     participant_labels = [participant_code(p.name) for p in participant_dirs]
     weekday_coverage = pd.DataFrame(0.0, index=WEEKDAY_ORDER, columns=participant_labels)
     class_coverage = (
@@ -522,6 +526,7 @@ def run_heatmap_suite(
 
         print(f"[INFO] {p_dir.name}: {len(metric_df)} valid {metric_label.lower()} rows")
 
+        # Each participant is summarized day by day before we average across days.
         p_schedule = get_participant_schedule(p_dir.name, schedule_map)
         weekday_day_coverage = {day: [] for day in WEEKDAY_ORDER}
         weekday_day_valid_points = {day: 0 for day in WEEKDAY_ORDER}
@@ -538,6 +543,7 @@ def run_heatmap_suite(
             day_df = day_df.sort_values("timestamp")
             day_blocks = p_schedule[day_name] if p_schedule and day_name in p_schedule else []
             is_friday = day_name == "Friday"
+            # Only count bins that overlap scheduled class time.
             weekday_bin_candidates = [
                 (start_t, end_t)
                 for start_t, end_t in time_bins_5min
@@ -560,6 +566,7 @@ def run_heatmap_suite(
                 weekday_day_coverage[day_short].append(float(np.mean(day_coverage_flags)) * 100.0)
             weekday_day_valid_points[day_short] += day_valid_bins
 
+        # Friday stays in the feasibility summaries, but not in the contextual class/time plots.
         if class_names and p_schedule is not None:
             for current_date, day_df in metric_df.groupby("date"):
                 day_name = pd.Timestamp(current_date).day_name()
@@ -613,14 +620,16 @@ def run_heatmap_suite(
                 class_coverage.loc[cls, participant] = (covered_bins / total_bins) * 100.0
 
     if not class_coverage.empty:
+        # Remove classes that never have data in any participant before plotting.
         class_coverage = class_coverage.loc[(class_coverage != 0).any(axis=1)]
         class_order = class_coverage.sum(axis=1).sort_values(ascending=False).index.tolist()
         class_coverage = class_coverage.loc[class_order]
 
-    weekday_coverage.to_csv(coverage_dir / f"{metric_folder}_coverage_by_weekday.csv")
+    # Write every graph directly into the datatype folder.
+    weekday_coverage.to_csv(output_dir / f"{metric_folder}_coverage_by_weekday.csv")
     plot_heatmap(
         weekday_coverage,
-        coverage_dir / f"{metric_folder}_coverage_by_weekday.png",
+        output_dir / f"{metric_folder}_coverage_by_weekday.png",
         title=f"{metric_label} Coverage by Weekday",
         xlabel="Participant",
         ylabel="Weekday",
@@ -633,10 +642,10 @@ def run_heatmap_suite(
     print(f"Caption: {metric_label} coverage by weekday. Each cell shows the percent of scheduled 5-minute bins with valid data for that participant and weekday. Friday is included in this feasibility summary.")
 
     if not class_coverage.empty:
-        class_coverage.to_csv(coverage_dir / f"{metric_folder}_coverage_by_class.csv")
+        class_coverage.to_csv(output_dir / f"{metric_folder}_coverage_by_class.csv")
         plot_heatmap(
             class_coverage,
-            coverage_dir / f"{metric_folder}_coverage_by_class.png",
+            output_dir / f"{metric_folder}_coverage_by_class.png",
             title=f"{metric_label} Coverage by Class",
             xlabel="Participant",
             ylabel="Class",
@@ -648,10 +657,10 @@ def run_heatmap_suite(
         )
         print(f"Caption: {metric_label} coverage by class. Each cell shows the percent of scheduled 5-minute bins inside that class that contained valid data for that participant. Friday is excluded from this contextual comparison.")
 
-    time_coverage.to_csv(coverage_dir / f"{metric_folder}_coverage_by_time.csv")
+    time_coverage.to_csv(output_dir / f"{metric_folder}_coverage_by_time.csv")
     plot_heatmap(
         time_coverage,
-        coverage_dir / f"{metric_folder}_coverage_by_time.png",
+        output_dir / f"{metric_folder}_coverage_by_time.png",
         title=f"{metric_label} Coverage by Time of Day",
         xlabel="Participant",
         ylabel="30-Minute Bin",
@@ -663,15 +672,15 @@ def run_heatmap_suite(
     )
     print(f"Caption: {metric_label} coverage by 30-minute interval. Each cell shows the mean percent coverage across the 5-minute bins inside that 30-minute window. Friday is excluded from this contextual comparison.")
 
-    weekday_valid_points.to_csv(values_dir / f"{metric_folder}_valid_data_points_by_weekday.csv")
+    weekday_valid_points.to_csv(output_dir / f"{metric_folder}_valid_data_points_by_weekday.csv")
     plot_heatmap(
         weekday_valid_points,
-        values_dir / f"{metric_folder}_valid_data_points_by_weekday.png",
+        output_dir / f"{metric_folder}_valid_data_points_by_weekday.png",
         title=f"{metric_label} Valid Data Points by Weekday",
         xlabel="Participant",
         ylabel="Weekday",
         cmap="viridis_r",
-        mask_zero=False,
+        mask_zero=True,
         figsize=(max(8, len(weekday_valid_points.columns) * 0.8), 4.5),
     )
     print(f"Caption: {metric_label} valid data points by weekday. Each cell shows the count of valid scheduled 5-minute bins available for that participant and weekday. Friday is included in this feasibility summary.")
