@@ -676,11 +676,11 @@ def run_heatmap_suite(
     plot_heatmap(
         weekday_valid_points,
         output_dir / f"{metric_folder}_valid_data_points_by_weekday.png",
-        title=f"{metric_label} Valid Data Points by Weekday",
+        title=f"{metric_label} Valid Scheduled 5-Minute Bins by Weekday",
         xlabel="Participant",
         ylabel="Weekday",
         cmap="viridis_r",
         mask_zero=True,
         figsize=(max(8, len(weekday_valid_points.columns) * 0.8), 4.5),
     )
-    print(f"Caption: {metric_label} valid data points by weekday. Each cell shows the count of valid scheduled 5-minute bins available for that participant and weekday. Friday is included in this feasibility summary.")
+    print(f"Caption: {metric_label} valid scheduled 5-minute bins by weekday. Each cell shows the count of valid scheduled 5-minute bins available for that participant and weekday. Friday is included in this feasibility summary.")

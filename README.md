@@ -16,10 +16,10 @@ Heatmap outputs are written under `Heatmaps/Graphs/<Datatype>/`, and each dataty
 
 ## Heatmap Scripts
 
-- `Heatmaps/apple_watch_hr_heatmaps.py` generates heart-rate coverage and valid-data-point heatmaps.
-- `Heatmaps/apple_watch_active_energy_heatmaps.py` generates active energy burned coverage and valid-data-point heatmaps.
-- `Heatmaps/apple_watch_basal_energy_heatmaps.py` generates basal energy burned coverage and valid-data-point heatmaps.
-- `Heatmaps/apple_watch_exercise_time_heatmaps.py` generates Apple exercise time coverage and valid-data-point heatmaps.
+- `Heatmaps/apple_watch_hr_heatmaps.py` generates heart-rate coverage and valid scheduled-bin heatmaps.
+- `Heatmaps/apple_watch_active_energy_heatmaps.py` generates active energy burned coverage and valid scheduled-bin heatmaps.
+- `Heatmaps/apple_watch_basal_energy_heatmaps.py` generates basal energy burned coverage and valid scheduled-bin heatmaps.
+- `Heatmaps/apple_watch_exercise_time_heatmaps.py` generates Apple exercise time coverage and valid scheduled-bin heatmaps.
 
 Each of those scripts uses the same fixed weekday, class, and 30-minute time windows, the same participant naming conventions, and a valid-bin count summary by weekday.
 
