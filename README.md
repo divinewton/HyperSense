@@ -23,6 +23,10 @@ Heatmap outputs are written under `Heatmaps/Graphs/<Datatype>/`, and each dataty
 
 Each of those scripts uses the same fixed weekday, class, and 30-minute time windows, the same participant naming conventions, and a valid-bin count summary by weekday.
 
+## Boxplot Script
+
+- `BoxPlots/apple_watch_activity_boxplots.py` generates one horizontal boxplot per Apple Watch datatype, saving the PNGs directly in `BoxPlots/Graphs/`.
+
 ## Calculation Scripts
 
 - `calculate_heart_rate.py` calculates heart-rate expected, observed, valid, and invalid 5-minute bins using point-sample placement.
