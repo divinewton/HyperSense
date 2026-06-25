@@ -23,9 +23,10 @@ Heatmap outputs are written under `Heatmaps/Graphs/<Datatype>/`, and each dataty
 
 Each of those scripts uses the same fixed weekday, class, and 30-minute time windows, the same participant naming conventions, and a valid-bin count summary by weekday.
 
-## Boxplot Script
+## Boxplot Scripts
 
 - `BoxPlots/apple_watch_activity_boxplots.py` generates one horizontal boxplot per Apple Watch datatype, saving the PNGs directly in `BoxPlots/Graphs/`.
+- `BoxPlots/apple_watch_hr_participant_small_multiples.py` generates a Figure 11-style heart-rate small-multiples grid: one panel per classroom activity with participant-level boxplots, saving to `BoxPlots/Graphs/heart_rate_participant_small_multiples.png`.
 
 ## Calculation Scripts
 
@@ -44,6 +45,13 @@ python3 Heatmaps/apple_watch_hr_heatmaps.py --root ~/Downloads/Exports
 python3 Heatmaps/apple_watch_active_energy_heatmaps.py --root ~/Downloads/Exports
 python3 Heatmaps/apple_watch_basal_energy_heatmaps.py --root ~/Downloads/Exports
 python3 Heatmaps/apple_watch_exercise_time_heatmaps.py --root ~/Downloads/Exports
+```
+
+Run the boxplot scripts from the repository root:
+
+```bash
+python3 BoxPlots/apple_watch_activity_boxplots.py --root ~/Downloads/Exports
+python3 BoxPlots/apple_watch_hr_participant_small_multiples.py --root ~/Downloads/Exports
 ```
 
 Run the calculation scripts from the repository root:
