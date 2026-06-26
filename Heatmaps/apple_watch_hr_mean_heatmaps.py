@@ -14,8 +14,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
+from heatmap_shared import APPLE_WATCH_DATA_PREFIX, LOCAL_TZ
 
-LOCAL_TZ = "US/Pacific"
 TIME_BINS_30_MIN = [
     ("08:30", "09:00"),
     ("09:00", "09:30"),
@@ -239,7 +239,7 @@ def build_mean_heatmaps(root: Path, output_dir: Path, hr_min: float, hr_max: flo
     plot_heatmap(
         class_pivot,
         output_dir / "heart_rate_mean_by_class.png",
-        title="Mean Heart Rate by Class (Apple)",
+        title=f"{APPLE_WATCH_DATA_PREFIX} Mean Heart Rate Heatmap by Class",
         ylabel="Class",
         cbar_label="Mean HR (bpm)",
     )
@@ -262,7 +262,7 @@ def build_mean_heatmaps(root: Path, output_dir: Path, hr_min: float, hr_max: flo
     plot_heatmap(
         time_pivot,
         output_dir / "heart_rate_mean_by_time_of_day.png",
-        title="Mean Heart Rate by Time of Day (30-minute bins)",
+        title=f"{APPLE_WATCH_DATA_PREFIX} Mean Heart Rate Heatmap by Time of Day (30-min bin)",
         ylabel="Time Interval (30-minute bins)",
         cbar_label="Mean HR (bpm)",
     )

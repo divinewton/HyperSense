@@ -21,6 +21,7 @@ if str(HEATMAPS_DIR) not in sys.path:
     sys.path.insert(0, str(HEATMAPS_DIR))
 
 from heatmap_shared import (  # noqa: E402
+    APPLE_WATCH_DATA_PREFIX,
     LOCAL_TZ,
     build_schedule_map,
     canonicalize_class_label,
@@ -242,7 +243,7 @@ def plot_metric_boxplot(
     ax.tick_params(axis="x", labelsize=9)
     ax.tick_params(axis="y", labelsize=10)
     ax.grid(axis="x", alpha=0.22)
-    ax.set_title("")
+    ax.set_title(f"{APPLE_WATCH_DATA_PREFIX} {metric_label} Distribution by Activity")
     sns.despine(ax=ax, left=False, bottom=False)
 
     fig.patch.set_facecolor("white")

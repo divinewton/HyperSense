@@ -16,6 +16,7 @@ import seaborn as sns
 
 
 LOCAL_TZ = "US/Pacific"
+APPLE_WATCH_DATA_PREFIX = "Apple Watch Data"
 
 WEEKDAY_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 
@@ -630,7 +631,7 @@ def run_heatmap_suite(
     plot_heatmap(
         weekday_coverage,
         output_dir / f"{metric_folder}_coverage_by_weekday.png",
-        title=f"{metric_label} Coverage by Weekday",
+        title=f"{APPLE_WATCH_DATA_PREFIX} {metric_label} Coverage Heatmap by Weekday (5-min bin)",
         xlabel="Participant",
         ylabel="Weekday",
         cmap="viridis_r",
@@ -646,7 +647,7 @@ def run_heatmap_suite(
         plot_heatmap(
             class_coverage,
             output_dir / f"{metric_folder}_coverage_by_class.png",
-            title=f"{metric_label} Coverage by Class",
+            title=f"{APPLE_WATCH_DATA_PREFIX} {metric_label} Coverage Heatmap by Class (5-min bin)",
             xlabel="Participant",
             ylabel="Class",
             cmap="viridis_r",
@@ -661,7 +662,7 @@ def run_heatmap_suite(
     plot_heatmap(
         time_coverage,
         output_dir / f"{metric_folder}_coverage_by_time.png",
-        title=f"{metric_label} Coverage by Time of Day",
+        title=f"{APPLE_WATCH_DATA_PREFIX} {metric_label} Coverage Heatmap by Time of Day (30-min bin)",
         xlabel="Participant",
         ylabel="30-Minute Bin",
         cmap="viridis_r",
@@ -676,7 +677,7 @@ def run_heatmap_suite(
     plot_heatmap(
         weekday_valid_points,
         output_dir / f"{metric_folder}_valid_data_points_by_weekday.png",
-        title=f"{metric_label} Valid Scheduled 5-Minute Bins by Weekday",
+        title=f"{APPLE_WATCH_DATA_PREFIX} {metric_label} Valid Scheduled 5-Minute Bins Heatmap by Weekday",
         xlabel="Participant",
         ylabel="Weekday",
         cmap="viridis_r",

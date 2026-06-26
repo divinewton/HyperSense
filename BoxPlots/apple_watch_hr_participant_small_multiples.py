@@ -21,7 +21,7 @@ HEATMAPS_DIR = SCRIPT_DIR.parent / "Heatmaps"
 if str(HEATMAPS_DIR) not in sys.path:
     sys.path.insert(0, str(HEATMAPS_DIR))
 
-from heatmap_shared import LOCAL_TZ, ensure_dir, list_participant_folders, participant_sort_key  # noqa: E402
+from heatmap_shared import APPLE_WATCH_DATA_PREFIX, LOCAL_TZ, ensure_dir, list_participant_folders, participant_sort_key  # noqa: E402
 
 from apple_watch_activity_boxplots import (  # noqa: E402
     display_class_label,
@@ -185,6 +185,7 @@ def plot_small_multiples(
         row, col = divmod(idx, ncols)
         axes[row][col].set_visible(False)
 
+    fig.suptitle(f"{APPLE_WATCH_DATA_PREFIX} Heart Rate by Participant and Activity", fontsize=14, y=1.02)
     fig.patch.set_facecolor("white")
     plt.tight_layout()
 
