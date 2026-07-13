@@ -38,6 +38,7 @@ Each of those scripts uses the same fixed weekday, class, and 30-minute time win
 - `Coverage/calculate_active_energy_burned.py` calculates active energy burned bins by mapping datapoint intervals onto schedule bins.
 - `Coverage/calculate_basal_energy_burned.py` calculates basal energy burned bins by mapping datapoint intervals onto schedule bins.
 - `Coverage/calculate_apple_exercise_time.py` calculates Apple Exercise Time bins using discrete event placement.
+- `Coverage/calculate_participant_coverage.py` prints per-participant expected bins and coverage percentages for HR, active energy, BMR, and logged exercise.
 - `Coverage/audit_binned_common.py` provides shared helpers used by the calculation scripts.
 
 ## Coverage Stratification Script
@@ -80,6 +81,7 @@ PYTHONPATH=. python3 Coverage/calculate_heart_rate.py
 PYTHONPATH=. python3 Coverage/calculate_active_energy_burned.py
 PYTHONPATH=. python3 Coverage/calculate_basal_energy_burned.py
 PYTHONPATH=. python3 Coverage/calculate_apple_exercise_time.py
+python3 Coverage/calculate_participant_coverage.py --root ~/Downloads/Exports
 ```
 
 Run the Table 6 coverage stratification script from the repository root:
