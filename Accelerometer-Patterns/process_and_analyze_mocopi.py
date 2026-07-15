@@ -90,8 +90,11 @@ def generate_epoch_features(combined_df, base_directory, participant_id, movemen
     """
     print(f"[{participant_id} - Step 3/3] Epoching raw data to 1-minute blocks...")
     
-    # Generate timestamp epochs - using format='mixed' or explicit warning suppression to keep console output clean
-    combined_df['Timestamp'] = pd.to_datetime(combined_df['Time_In_PST'], errors='coerce')
+    # Combine recording date with clock time so epoch timestamps use the actual school day.
+    combined_df['Timestamp'] = pd.to_datetime(
+        combined_df['Date'].astype(str) + ' ' + combined_df['Time_In_PST'].astype(str),
+        errors='coerce',
+    )
     combined_df['Epoch_1Min'] = combined_df['Timestamp'].dt.floor('1min')
     
     # Calculate window metrics (including standard deviation for variability)
