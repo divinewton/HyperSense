@@ -48,8 +48,8 @@ def load_schedule(schedule_path):
     return sched
 
 
-def build_schedule_bins_for_day(schedule_df, day_str):
-    # Expand each class period into concrete 5-minute bins for one specific school day.
+def build_schedule_bins_for_day(schedule_df, day_str, bin_size_minutes=5):
+    # Expand each class period into concrete schedule bins for one specific school day.
     base_day = pd.Timestamp(day_str).tz_localize("US/Pacific")
     bin_starts = []
     bin_ends = []
@@ -62,7 +62,7 @@ def build_schedule_bins_for_day(schedule_df, day_str):
 
         current = start_dt
         while current < end_dt:
-            next_edge = min(current + pd.Timedelta(minutes=5), end_dt)
+            next_edge = min(current + pd.Timedelta(minutes=bin_size_minutes), end_dt)
             bin_starts.append(current.value)
             bin_ends.append(next_edge.value)
             current = next_edge
@@ -70,8 +70,8 @@ def build_schedule_bins_for_day(schedule_df, day_str):
     return np.array(bin_starts, dtype="int64"), np.array(bin_ends, dtype="int64")
 
 
-def get_schedule_expected_bins(schedule_path, total_days):
-    # Compute the number of 5-minute bins a schedule should produce for a given number of tracked days, excluding DELETE rows.
+def get_schedule_expected_bins(schedule_path, total_days, bin_size_minutes=5):
+    # Compute the number of schedule bins a schedule should produce for a given number of tracked days, excluding DELETE rows.
     if not os.path.exists(schedule_path) or total_days == 0:
         return 0
 
@@ -88,7 +88,7 @@ def get_schedule_expected_bins(schedule_path, total_days):
 
         current = start_dt
         while current < end_dt:
-            next_edge = min(current + pd.Timedelta(minutes=5), end_dt)
+            next_edge = min(current + pd.Timedelta(minutes=bin_size_minutes), end_dt)
             total_bins += 1
             current = next_edge
 
@@ -133,7 +133,14 @@ def find_point_bin(point_ns, bin_starts_ns, bin_ends_ns):
     return int(matches[0])
 
 
-def run_binned_audit(metric_label, type_token, valid_min=None, valid_max=None, mode="interval"):
+def compute_binned_audit(
+    type_token,
+    valid_min=None,
+    valid_max=None,
+    mode="interval",
+    bin_size_minutes=5,
+    exports_dir=EXPORTS_DIR,
+):
     total_sample_expected_bins = 0
     total_sample_observed_bins = 0
     total_sample_valid_bins = 0
@@ -141,7 +148,7 @@ def run_binned_audit(metric_label, type_token, valid_min=None, valid_max=None, m
 
     for pNum, assigned_dates in participants_dates.items():
         # Skip participants whose exported raw file is missing.
-        raw_path = os.path.join(EXPORTS_DIR, f"P0{pNum}export.csv")
+        raw_path = os.path.join(exports_dir, f"P0{pNum}export.csv")
         if not os.path.exists(raw_path):
             continue
 
@@ -151,17 +158,19 @@ def run_binned_audit(metric_label, type_token, valid_min=None, valid_max=None, m
 
         # Participants 04 and 05 share one schedule pair; the rest use the shared schedule pair.
         if pNum in ["04", "05"]:
-            fri_path = os.path.join(EXPORTS_DIR, "schedData_P(04,05)_Fr.csv")
-            oth_path = os.path.join(EXPORTS_DIR, "schedData_P(04,05)_M-Th.csv")
+            fri_path = os.path.join(exports_dir, "schedData_P(04,05)_Fr.csv")
+            oth_path = os.path.join(exports_dir, "schedData_P(04,05)_M-Th.csv")
         else:
-            fri_path = os.path.join(EXPORTS_DIR, "schedData_P(01,02,03,06,07,08,09,12,14,16)_FR.csv")
-            oth_path = os.path.join(EXPORTS_DIR, "schedData_P(01,02,03,06,07,08,09,12,14,16)_M-TH.csv")
+            fri_path = os.path.join(exports_dir, "schedData_P(01,02,03,06,07,08,09,12,14,16)_FR.csv")
+            oth_path = os.path.join(exports_dir, "schedData_P(01,02,03,06,07,08,09,12,14,16)_M-TH.csv")
 
         sched_fri = load_schedule(fri_path)
         sched_oth = load_schedule(oth_path)
 
         # Expected bins from the actual schedule bin layout, scaled by tracked Friday and non-Friday dates.
-        user_expected_bins = get_schedule_expected_bins(fri_path, fridays_count) + get_schedule_expected_bins(oth_path, other_days_count)
+        user_expected_bins = get_schedule_expected_bins(fri_path, fridays_count, bin_size_minutes) + get_schedule_expected_bins(
+            oth_path, other_days_count, bin_size_minutes
+        )
         total_sample_expected_bins += user_expected_bins
 
         # Detect the header start dynamically since the export files can contain metadata before the CSV header.
@@ -199,7 +208,9 @@ def run_binned_audit(metric_label, type_token, valid_min=None, valid_max=None, m
                     if current_sched.empty:
                         continue
 
-                    bin_starts_ns, bin_ends_ns = build_schedule_bins_for_day(current_sched, date_str)
+                    bin_starts_ns, bin_ends_ns = build_schedule_bins_for_day(
+                        current_sched, date_str, bin_size_minutes
+                    )
                     if len(bin_starts_ns) == 0:
                         continue
 
@@ -250,20 +261,59 @@ def run_binned_audit(metric_label, type_token, valid_min=None, valid_max=None, m
         total_sample_valid_bins += user_valid_bins
         processed_participants += 1
 
-    # Final summary is shown as averages per processed participant, along with an overall coverage percentage for the entire sample.
+    avg_expected = 0.0
+    avg_observed = 0.0
+    avg_valid = 0.0
+    global_coverage_percentage = 0.0
+
     if processed_participants > 0:
         avg_expected = total_sample_expected_bins / processed_participants
         avg_observed = total_sample_observed_bins / processed_participants
         avg_valid = total_sample_valid_bins / processed_participants
-
-        global_coverage_percentage = 0.0
         if total_sample_expected_bins > 0:
             global_coverage_percentage = (total_sample_valid_bins / total_sample_expected_bins) * 100
 
-        prefix = f"{metric_label} " if metric_label else ""
+    return {
+        "processed_participants": processed_participants,
+        "total_expected_bins": total_sample_expected_bins,
+        "total_observed_bins": total_sample_observed_bins,
+        "total_valid_bins": total_sample_valid_bins,
+        "avg_expected_bins": avg_expected,
+        "avg_observed_bins": avg_observed,
+        "avg_valid_bins": avg_valid,
+        "coverage_percentage": global_coverage_percentage,
+    }
 
-        print(f"{prefix}Expected (5-Min Bins): {round(avg_expected):,d} bins")
-        print(f"{prefix}Observed (5-Min Bins): {round(avg_observed):,d} bins")
-        print(f"{prefix}Valid (5-Min Bins): {round(avg_valid):,d} bins")
-        print(f"{prefix}Invalid (5-Min Bins): {round(max(avg_observed - avg_valid, 0)):,d} bins")
-        print(f"{prefix}Coverage: {global_coverage_percentage:.2f}%")
+
+def run_binned_audit(
+    metric_label,
+    type_token,
+    valid_min=None,
+    valid_max=None,
+    mode="interval",
+    bin_size_minutes=5,
+    exports_dir=EXPORTS_DIR,
+):
+    results = compute_binned_audit(
+        type_token=type_token,
+        valid_min=valid_min,
+        valid_max=valid_max,
+        mode=mode,
+        bin_size_minutes=bin_size_minutes,
+        exports_dir=exports_dir,
+    )
+
+    if results["processed_participants"] > 0:
+        prefix = f"{metric_label} " if metric_label else ""
+        bin_label = f"{bin_size_minutes}-Min Bins"
+
+        print(f"{prefix}Expected ({bin_label}): {round(results['avg_expected_bins']):,d} bins")
+        print(f"{prefix}Observed ({bin_label}): {round(results['avg_observed_bins']):,d} bins")
+        print(f"{prefix}Valid ({bin_label}): {round(results['avg_valid_bins']):,d} bins")
+        print(
+            f"{prefix}Invalid ({bin_label}): "
+            f"{round(max(results['avg_observed_bins'] - results['avg_valid_bins'], 0)):,d} bins"
+        )
+        print(f"{prefix}Coverage: {results['coverage_percentage']:.2f}%")
+
+    return results
