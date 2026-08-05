@@ -1,0 +1,5 @@
+# Never commit identifiable response data, participant mappings, or analysis output.
+inputs/
+outputs/
+crosswalk*.csv
+rater_selection*.csv
