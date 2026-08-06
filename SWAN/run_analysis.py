@@ -176,10 +176,114 @@ def class_context_figure(cls, out, rng):
     fig.suptitle("Exploratory head-acceleration association by classroom context\n(points: rho; lines: 95% bootstrap CI; contexts with n≥5 only)",fontsize=14)
     fig.tight_layout(rect=(0,0,1,.91)); fig.savefig(out/"figure_6_classroom_context.png",dpi=300); plt.close(fig)
 
+def head_effect_forest(head, out, rng):
+    """Compact effect-size view of the four pre-specified head associations."""
+    pairs=[
+        ("mean_accel","teacher_inattention_swan","Acceleration → Inattention"),
+        ("mean_jerk","teacher_inattention_swan","Jerk → Inattention"),
+        ("mean_accel","teacher_overall_swan","Acceleration → Overall"),
+        ("mean_jerk","teacher_overall_swan","Jerk → Overall"),
+    ]
+    rows=[]
+    for x,y,label in pairs:
+        z=head[[x,y]].dropna(); rho,p=spearmanr(z[x],z[y]); lo,hi=ci(z[x].to_numpy(float),z[y].to_numpy(float),rng)
+        rows.append((label,rho,lo,hi,p))
+    fig,ax=plt.subplots(figsize=(7.3,4.4)); y=np.arange(len(rows))
+    for yy,(_,rho,lo,hi,_) in zip(y,rows):
+        ax.plot([lo,hi],[yy,yy],color="#1967d2",lw=2); ax.scatter(rho,yy,color="#1967d2",s=56,zorder=3)
+    ax.axvline(0,color="gray",lw=1,ls="--"); ax.set_xlim(-1,1); ax.set_yticks(y,[r[0] for r in rows]); ax.invert_yaxis()
+    ax.set_xlabel("Spearman correlation (95% bootstrap CI)"); ax.set_title("Focused head-sensor associations with teacher SWAN"); ax.grid(axis="x",alpha=.2)
+    fig.tight_layout(); fig.savefig(out/"exploratory_figure_9_head_effect_forest.png",dpi=300); plt.close(fig)
+
+def head_rank_scatter(head, out):
+    """Rank visualization corresponds directly to the Spearman statistic."""
+    pairs=[("mean_accel","teacher_inattention_swan","Head acceleration rank","Teacher inattention rank"),("mean_jerk","teacher_inattention_swan","Head jerk rank","Teacher inattention rank"),("mean_accel","teacher_overall_swan","Head acceleration rank","Teacher overall SWAN rank"),("mean_jerk","teacher_overall_swan","Head jerk rank","Teacher overall SWAN rank")]
+    fig,axes=plt.subplots(2,2,figsize=(10.5,8))
+    for ax,(x,y,xlabel,ylabel) in zip(axes.ravel(),pairs):
+        z=head[[x,y,"participant_id"]].copy(); z[x]=z[x].rank(); z[y]=z[y].rank()
+        scatter(ax,z,x,y,xlabel,ylabel,"Rank-order view of head movement and teacher SWAN")
+        ax.set_xlim(.5,12.5); ax.set_ylim(.5,12.5)
+    fig.suptitle("Head-sensor relationships shown as ranks (the Spearman-correlation scale)",fontsize=14)
+    fig.tight_layout(rect=(0,0,1,.95)); fig.savefig(out/"exploratory_figure_8_head_rank_scatter.png",dpi=300); plt.close(fig)
+
+def head_leave_one_out(head, out):
+    """Show whether any single child drives a focused head correlation."""
+    pairs=[("mean_accel","teacher_inattention_swan","Acceleration → Inattention"),("mean_jerk","teacher_inattention_swan","Jerk → Inattention"),("mean_accel","teacher_overall_swan","Acceleration → Overall"),("mean_jerk","teacher_overall_swan","Jerk → Overall")]
+    fig,axes=plt.subplots(2,2,figsize=(10.5,8),sharex=True)
+    for ax,(x,y,title) in zip(axes.ravel(),pairs):
+        z=head[["participant_id",x,y]].dropna(); full=spearmanr(z[x],z[y]).statistic
+        values=[]
+        for _,row in z.iterrows():
+            rest=z[z.participant_id.ne(row.participant_id)]; values.append((row.participant_id,spearmanr(rest[x],rest[y]).statistic))
+        values.sort(); yy=np.arange(len(values)); ax.scatter([v for _,v in values],yy,color="#1967d2",s=42); ax.axvline(full,color="#d93025",lw=1.6,label=f"All children: {full:.2f}")
+        ax.set_yticks(yy,[pid for pid,_ in values]); ax.set_xlim(-.1,1); ax.set_xlabel("Correlation after leaving out this child"); ax.set_title(title); ax.grid(axis="x",alpha=.2); ax.legend(fontsize=8,loc="lower right")
+    fig.suptitle("Leave-one-child-out sensitivity of focused head correlations",fontsize=14)
+    fig.tight_layout(rect=(0,0,1,.95)); fig.savefig(out/"exploratory_figure_10_head_leave_one_out.png",dpi=300); plt.close(fig)
+
+def head_class_colored_scatter(head, dominant_class, out):
+    """Show the overall association with points labeled by the most-sampled class."""
+    z=head.merge(dominant_class,on="participant_id",how="left"); classes=sorted(z.primary_class.dropna().unique()); colors={c:plt.get_cmap("tab10")(i % 10) for i,c in enumerate(classes)}
+    fig,axes=plt.subplots(1,2,figsize=(12,5))
+    for ax,y,title in zip(axes,["teacher_inattention_swan","teacher_overall_swan"],["Teacher inattention SWAN","Teacher overall SWAN"]):
+        for c,g in z.groupby("primary_class",dropna=False):
+            label=c if pd.notna(c) else "No class label"; ax.scatter(g.mean_accel,g[y],s=55,color=colors.get(c,"gray"),label=label)
+        rho,p=spearmanr(z.mean_accel,z[y]); m,b=np.polyfit(z.mean_accel.to_numpy(float),z[y].to_numpy(float),1); grid=np.linspace(z.mean_accel.min(),z.mean_accel.max(),100); ax.plot(grid,m*grid+b,color="#333333",lw=1.4)
+        for _,row in z.iterrows(): ax.annotate(row.participant_id,(row.mean_accel,row[y]),xytext=(3,3),textcoords="offset points",fontsize=7)
+        ax.set_xlabel("Mean head acceleration"); ax.set_ylabel(title); ax.set_title(f"rho={rho:.2f}, p={p:.3f}"); ax.grid(alpha=.2)
+    handles,labels=axes[0].get_legend_handles_labels(); fig.legend(handles,labels,title="Most-sampled class",loc="lower center",ncol=min(5,len(labels)))
+    fig.suptitle("Head acceleration and teacher SWAN, colored by primary sampled classroom",fontsize=14)
+    fig.tight_layout(rect=(0,.11,1,.93)); fig.savefig(out/"exploratory_figure_11_head_by_class_color.png",dpi=300); plt.close(fig)
+
+def head_correlation_heatmap(head, out):
+    measures=[("mean_accel","Acceleration"),("mean_jerk","Jerk")]; outcomes=[("teacher_inattention_swan","Inattention"),("teacher_hyperactivity_swan","Hyperactivity"),("teacher_overall_swan","Overall")]
+    values=np.array([[spearmanr(head[x],head[y]).statistic for y,_ in outcomes] for x,_ in measures])
+    fig,ax=plt.subplots(figsize=(7,3.6)); im=ax.imshow(values,vmin=-1,vmax=1,cmap="RdBu_r")
+    ax.set_xticks(range(len(outcomes)),[label for _,label in outcomes]); ax.set_yticks(range(len(measures)),[label for _,label in measures])
+    for i in range(values.shape[0]):
+        for j in range(values.shape[1]): ax.text(j,i,f"{values[i,j]:.2f}",ha="center",va="center",fontsize=13)
+    fig.colorbar(im,ax=ax,label="Spearman correlation"); ax.set_title("Head-sensor movement correlations with teacher SWAN")
+    fig.tight_layout(); fig.savefig(out/"exploratory_figure_12_head_correlation_heatmap.png",dpi=300); plt.close(fig)
+
+def all_sensor_correlation_heatmap(sensor, out):
+    """All-location context for the targeted head result (teacher outcomes only)."""
+    outcomes=[("teacher_inattention_swan","Inattention"),("teacher_hyperactivity_swan","Hyperactivity"),("teacher_overall_swan","Overall")]
+    rows=[]
+    for location in sorted(sensor.Sensor.dropna().unique()):
+        for feature,measure in [("mean_accel","Acceleration"),("mean_jerk","Jerk")]:
+            g=sensor[sensor.Sensor.eq(location)]; values=[]; pvalues=[]
+            for outcome,_ in outcomes:
+                z=g[[feature,outcome]].dropna(); rho,p=spearmanr(z[feature],z[outcome]); values.append(rho); pvalues.append(p)
+            rows.append((location,measure,values,pvalues))
+    # Keep the focal Head rows at the top; other locations alphabetic.
+    rows.sort(key=lambda row: (row[0] != "Head",row[0],row[1] != "Acceleration"))
+    values=np.array([row[2] for row in rows]); pvalues=np.array([row[3] for row in rows])
+    fig,ax=plt.subplots(figsize=(7.4,7.7)); im=ax.imshow(values,vmin=-1,vmax=1,cmap="RdBu_r",aspect="auto")
+    ax.set_xticks(range(len(outcomes)),[label for _,label in outcomes])
+    labels=[f"{location} — {measure}" for location,measure,*_ in rows]; ax.set_yticks(range(len(rows)),labels)
+    for i in range(values.shape[0]):
+        for j in range(values.shape[1]):
+            star="*" if pvalues[i,j]<.05 else ""
+            ax.text(j,i,f"{values[i,j]:.2f}{star}",ha="center",va="center",fontsize=10,fontweight="bold" if rows[i][0]=="Head" else "normal")
+    for tick,row in zip(ax.get_yticklabels(),rows):
+        if row[0]=="Head": tick.set_fontweight("bold"); tick.set_color("#d93025")
+    fig.colorbar(im,ax=ax,label="Spearman correlation")
+    ax.set_title("Teacher-SWAN correlations across all MOCOPI sensors\nHead rows bold; * unadjusted p < .05; n = 12 per cell")
+    fig.tight_layout(); fig.savefig(out/"exploratory_figure_13_all_mocopi_sensor_heatmap.png",dpi=300); plt.close(fig)
+
+def exploratory_head_figures(head, sensor, dominant_class, out, rng):
+    head_rank_scatter(head,out); head_effect_forest(head,out,rng); head_leave_one_out(head,out); head_class_colored_scatter(head,dominant_class,out); head_correlation_heatmap(head,out); all_sensor_correlation_heatmap(sensor,out)
+
 def main():
-    p=argparse.ArgumentParser(); p.add_argument("--apple-root",required=True,type=Path); p.add_argument("--swan-workbook",required=True,type=Path); p.add_argument("--mocopi-root",required=True,type=Path); p.add_argument("--crosswalk",type=Path,default=Path("SWAN/inputs/participant_crosswalk.csv")); p.add_argument("--output-dir",type=Path,default=Path("SWAN/outputs")); a=p.parse_args()
+    p=argparse.ArgumentParser(); p.add_argument("--apple-root",required=True,type=Path); p.add_argument("--swan-workbook",required=True,type=Path); p.add_argument("--mocopi-root",required=True,type=Path); p.add_argument("--crosswalk",type=Path,default=Path("SWAN/inputs/participant_crosswalk.csv")); p.add_argument("--output-dir",type=Path,default=Path("SWAN/outputs")); p.add_argument("--extra-figures",action="store_true",help="Also write five optional exploratory head-sensor visualizations."); p.add_argument("--extra-figures-only",action="store_true",help="Write only optional head-sensor visualizations; skips Apple Watch processing."); a=p.parse_args()
     out=a.output_dir; out.mkdir(parents=True,exist_ok=True); cross=pd.read_csv(a.crosswalk,dtype=str).fillna(""); cross=cross[cross.include_in_analysis.str.lower().eq("yes")]
     swan=load_swan(a.swan_workbook,cross); mocopi=load_mocopi(a.mocopi_root); pids=cross.participant_id.tolist(); rng=np.random.default_rng(20260805)
+    if a.extra_figures_only:
+        sensor=mocopi.groupby(["Participant","Sensor"],as_index=False).agg(valid_epochs=("Intensity","size"),mean_accel=("Intensity","mean"),mean_jerk=("Jerk","mean")).merge(swan,left_on="Participant",right_on="participant_id",how="inner")
+        head=sensor[sensor.Sensor.eq("Head")].copy()
+        dominant_class=(mocopi[mocopi.Sensor.eq("Head")].groupby(["Participant","class"]).size().reset_index(name="epochs").sort_values(["Participant","epochs"],ascending=[True,False]).drop_duplicates("Participant").rename(columns={"Participant":"participant_id","class":"primary_class"})[["participant_id","primary_class"]])
+        exploratory_head_figures(head,sensor,dominant_class,out,rng)
+        print(f"Wrote optional exploratory head figures to {out}")
+        return
     cache_path=out/".apple_hr_cache.csv"; apple_columns=["participant_id","valid_hr_records","mean_hr_bpm","sd_hr_bpm","valid_watch_step_records","mean_daily_watch_steps","metric_version"]
     apple=pd.read_csv(cache_path) if cache_path.is_file() else pd.DataFrame(columns=apple_columns)
     if set(apple_columns)-set(apple.columns) or not apple.metric_version.eq(4).all(): apple=pd.DataFrame(columns=apple_columns)
@@ -204,6 +308,9 @@ def main():
                 z=g[[f,score]].dropna(); r,pv=(spearmanr(z[f],z[score]) if len(z)>=5 else (np.nan,np.nan)); class_rows.append({"class_label":c,"feature":f,"swan_outcome":score,"n":len(z),"spearman_rho":r,"p_value":pv})
     class_table=pd.DataFrame(class_rows); class_table["p_value_fdr_bh"]=bh(class_table.p_value); class_table.to_csv(out/"supplement_table_s2_head_sensor_class_correlations.csv",index=False)
     figures(data,head,out); sensor_profile_figure(sensor,out,rng); coverage_figure(data,out); class_context_figure(cls,out,rng)
+    if a.extra_figures:
+        dominant_class=(mocopi[mocopi.Sensor.eq("Head")].groupby(["Participant","class"]).size().reset_index(name="epochs").sort_values(["Participant","epochs"],ascending=[True,False]).drop_duplicates("Participant").rename(columns={"Participant":"participant_id","class":"primary_class"})[["participant_id","primary_class"]])
+        exploratory_head_figures(head,sensor,dominant_class,out,rng)
     cache_path.unlink(missing_ok=True)
     print(f"Wrote concise analysis outputs to {out}")
 
