@@ -39,13 +39,21 @@ def ci(x,y,rng,n=2000):
         if np.isfinite(r): values.append(r)
     return (np.quantile(values,.025),np.quantile(values,.975)) if values else (np.nan,np.nan)
 
-def read_hr(path: Path,pid: str) -> pd.DataFrame:
+def read_watch_metrics(path: Path,pid: str) -> tuple[pd.DataFrame,pd.DataFrame]:
+    """Return valid study-period heart rate and Apple-Watch step records.
+
+    Health exports do not provide raw accelerometer samples. StepCount from an
+    Apple Watch source is therefore retained as the Watch movement proxy.
+    """
     with path.open(encoding="utf-8-sig",errors="ignore") as h: header=next(i for i,line in enumerate(h) if "/@locale" in line)
-    raw=pd.read_csv(path,skiprows=header,usecols=["/Record/@startDate","/Record/@type","/Record/@value"],low_memory=False)
-    raw=raw[raw["/Record/@type"].eq("HKQuantityTypeIdentifierHeartRate")].copy()
+    raw=pd.read_csv(path,skiprows=header,usecols=["/Record/@startDate","/Record/@type","/Record/@value","/Record/@sourceName"],low_memory=False)
     raw["ts"]=pd.to_datetime(raw["/Record/@startDate"],errors="coerce",utc=True).dt.tz_convert("US/Pacific"); raw["hr"]=pd.to_numeric(raw["/Record/@value"],errors="coerce")
     raw=raw.dropna(subset=["ts","hr"]); raw["date"]=raw.ts.dt.strftime("%Y-%m-%d")
-    return raw[raw.date.isin(STUDY_DATES[pid]) & raw.hr.between(40,180)]
+    raw=raw[raw.date.isin(STUDY_DATES[pid])].copy()
+    hr=raw[raw["/Record/@type"].eq("HKQuantityTypeIdentifierHeartRate") & raw.hr.between(40,180)].copy()
+    source=raw["/Record/@sourceName"].astype(str).str.replace("\u00a0"," ",regex=False)
+    steps=raw[raw["/Record/@type"].eq("HKQuantityTypeIdentifierStepCount") & source.str.contains("Apple Watch",case=False,na=False,regex=False) & raw.hr.ge(0)].copy()
+    return hr,steps
 
 def load_swan(path,crosswalk):
     source=pd.read_excel(path); name="Child Name / ID\n"; needed={name,"Inattention (1-9)","Hyperactivity (10-18)"}
@@ -103,6 +111,7 @@ def figures(data,head,out):
         for _,row in data.iterrows(): ax.annotate(row.participant_id,(row[x],row[y]),xytext=(3,3),textcoords="offset points",fontsize=7)
         ax.set_xlabel(f"Parent {d.title()} SWAN"); ax.set_ylabel(f"Teacher {d.title()} SWAN"); ax.set_title(f"{d.title()}\nrho={r:.2f}, p={p:.3f}"); ax.grid(alpha=.2)
     fig.suptitle("Parent and retained-teacher SWAN ratings",fontsize=15); fig.tight_layout(rect=(0,0,1,.93)); fig.savefig(out/"figure_3_parent_teacher_agreement.png",dpi=300); plt.close(fig)
+    fig,ax=plt.subplots(figsize=(6.4,5)); scatter(ax,data,"mean_daily_watch_steps","teacher_inattention_swan","Mean daily Apple Watch steps","Teacher inattention SWAN","Apple Watch movement proxy and teacher inattention SWAN"); fig.tight_layout(); fig.savefig(out/"figure_7_apple_watch_steps.png",dpi=300); plt.close(fig)
 
 def sensor_profile_figure(sensor, out, rng):
     """One compact robustness check: acceleration associations across sensors."""
@@ -136,11 +145,11 @@ def sensor_profile_figure(sensor, out, rng):
 def coverage_figure(data, out):
     """Document analytic exposure without adding another outcome comparison."""
     z=data.sort_values("participant_id")
-    fig,axes=plt.subplots(1,2,figsize=(11,4.5),sharey=True)
+    fig,axes=plt.subplots(1,3,figsize=(15,4.5),sharey=True)
     for ax,column,title in zip(
         axes,
-        ["valid_hr_records","valid_epochs"],
-        ["Valid Apple Watch heart-rate records","Valid MOCOPI one-minute epochs"],
+        ["valid_hr_records","valid_watch_step_records","valid_epochs"],
+        ["Valid Apple Watch heart-rate records","Valid Apple Watch step records","Valid MOCOPI one-minute epochs"],
     ):
         ax.barh(z.participant_id,z[column],color="#1967d2")
         ax.set_xscale("log"); ax.set_xlabel("Number of valid records (log scale)"); ax.set_title(title); ax.grid(axis="x",alpha=.2)
@@ -171,18 +180,19 @@ def main():
     p=argparse.ArgumentParser(); p.add_argument("--apple-root",required=True,type=Path); p.add_argument("--swan-workbook",required=True,type=Path); p.add_argument("--mocopi-root",required=True,type=Path); p.add_argument("--crosswalk",type=Path,default=Path("SWAN/inputs/participant_crosswalk.csv")); p.add_argument("--output-dir",type=Path,default=Path("SWAN/outputs")); a=p.parse_args()
     out=a.output_dir; out.mkdir(parents=True,exist_ok=True); cross=pd.read_csv(a.crosswalk,dtype=str).fillna(""); cross=cross[cross.include_in_analysis.str.lower().eq("yes")]
     swan=load_swan(a.swan_workbook,cross); mocopi=load_mocopi(a.mocopi_root); pids=cross.participant_id.tolist(); rng=np.random.default_rng(20260805)
-    cache_path=out/".apple_hr_cache.csv"
-    apple=pd.read_csv(cache_path) if cache_path.is_file() else pd.DataFrame(columns=["participant_id","valid_hr_records","mean_hr_bpm","sd_hr_bpm"])
+    cache_path=out/".apple_hr_cache.csv"; apple_columns=["participant_id","valid_hr_records","mean_hr_bpm","sd_hr_bpm","valid_watch_step_records","mean_daily_watch_steps","metric_version"]
+    apple=pd.read_csv(cache_path) if cache_path.is_file() else pd.DataFrame(columns=apple_columns)
+    if set(apple_columns)-set(apple.columns) or not apple.metric_version.eq(4).all(): apple=pd.DataFrame(columns=apple_columns)
     apple=apple[apple.participant_id.isin(pids)].copy()
     for pid in pids:
         if pid in set(apple.participant_id): continue
-        print(f"[INFO] Reading Apple Watch {pid}",flush=True); h=read_hr(a.apple_root/f"{pid}export.csv",pid)
-        apple=pd.concat([apple,pd.DataFrame([{"participant_id":pid,"valid_hr_records":len(h),"mean_hr_bpm":h.hr.mean(),"sd_hr_bpm":h.hr.std(ddof=1)}])],ignore_index=True).drop_duplicates("participant_id",keep="last")
+        print(f"[INFO] Reading Apple Watch {pid}",flush=True); h,steps=read_watch_metrics(a.apple_root/f"{pid}export.csv",pid)
+        apple=pd.concat([apple,pd.DataFrame([{"participant_id":pid,"valid_hr_records":len(h),"mean_hr_bpm":h.hr.mean(),"sd_hr_bpm":h.hr.std(ddof=1),"valid_watch_step_records":len(steps),"mean_daily_watch_steps":steps.hr.sum()/len(STUDY_DATES[pid]) if len(steps) else np.nan,"metric_version":4}])],ignore_index=True).drop_duplicates("participant_id",keep="last")
         apple.to_csv(cache_path,index=False)
-    apple=apple.sort_values("participant_id"); total=mocopi.groupby("Participant",as_index=False).agg(valid_epochs=("Intensity","size"),mean_accel=("Intensity","mean"),mean_jerk=("Jerk","mean"),sensor_count=("Sensor","nunique")).rename(columns={"Participant":"participant_id"})
+    apple=apple.sort_values("participant_id").drop(columns="metric_version"); total=mocopi.groupby("Participant",as_index=False).agg(valid_epochs=("Intensity","size"),mean_accel=("Intensity","mean"),mean_jerk=("Jerk","mean"),sensor_count=("Sensor","nunique")).rename(columns={"Participant":"participant_id"})
     data=swan.merge(apple,on="participant_id",validate="one_to_one").merge(total,on="participant_id",validate="one_to_one"); data.to_csv(out/"analysis_dataset.csv",index=False)
-    data[["participant_id","valid_hr_records","valid_epochs","sensor_count"]].to_csv(out/"table_1_participant_coverage.csv",index=False)
-    primary=pd.concat([corr_table(data,[("mean_hr_bpm","Mean all-study-period heart rate")],SCORES,"Apple Watch heart rate",rng),corr_table(data,[("mean_accel","Mean all-sensor acceleration"),("mean_jerk","Mean all-sensor jerk")],SCORES,"Total MOCOPI movement",rng)],ignore_index=True); primary.to_csv(out/"table_2_primary_correlations.csv",index=False)
+    data[["participant_id","valid_hr_records","valid_watch_step_records","valid_epochs","sensor_count"]].to_csv(out/"table_1_participant_coverage.csv",index=False)
+    primary=pd.concat([corr_table(data,[("mean_hr_bpm","Mean all-study-period heart rate")],SCORES,"Apple Watch heart rate",rng),corr_table(data,[("mean_daily_watch_steps","Mean daily Apple Watch steps")],SCORES,"Apple Watch movement proxy",rng),corr_table(data,[("mean_accel","Mean all-sensor acceleration"),("mean_jerk","Mean all-sensor jerk")],SCORES,"Total MOCOPI movement",rng)],ignore_index=True); primary.to_csv(out/"table_2_primary_correlations.csv",index=False)
     sensor=mocopi.groupby(["Participant","Sensor"],as_index=False).agg(valid_epochs=("Intensity","size"),mean_accel=("Intensity","mean"),mean_jerk=("Jerk","mean")).merge(swan,left_on="Participant",right_on="participant_id",how="inner"); head=sensor[sensor.Sensor.eq("Head")].copy(); head_results=corr_table(head,[("mean_accel","Head acceleration"),("mean_jerk","Head jerk")],["teacher_inattention_swan","teacher_overall_swan"],"Head sensor replication",rng); head_results.to_csv(out/"table_3_head_sensor_replication.csv",index=False)
     all_sensor=[]
     for s in sorted(sensor.Sensor.unique()): all_sensor.append(corr_table(sensor[sensor.Sensor.eq(s)],[("mean_accel","Acceleration"),("mean_jerk","Jerk")],SCORES[:3],"All sensors (teacher)",rng).assign(sensor=s))
