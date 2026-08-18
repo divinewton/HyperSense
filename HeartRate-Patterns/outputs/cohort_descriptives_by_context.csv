@@ -1,0 +1,14 @@
+device,context,n_participants,mean_hr
+smart-ring,Academic classes,12,96.84062822107364
+smart-ring,Cash-out,9,106.4111817796798
+smart-ring,Homeroom,12,100.11765203363268
+smart-ring,Physical Education,2,113.66794736842105
+smart-ring,Social Skills,7,104.65121684424709
+smart-ring,Study Hall,5,102.39419590148971
+smartwatch,Academic classes,12,94.94636465079903
+smartwatch,Cash-out,12,99.02068108820669
+smartwatch,Homeroom,12,99.46116403764326
+smartwatch,Lunch,12,117.57830436074369
+smartwatch,Physical Education,4,127.45987907358065
+smartwatch,Social Skills,12,105.1768737641526
+smartwatch,Study Hall,2,93.4558929326538
