@@ -338,20 +338,28 @@ def device_n(cohort: pd.DataFrame, device: str, stratum: str, level: str) -> int
 
 def mean_plot(ax, cohort: pd.DataFrame, stratum: str, levels: list[str], title: str) -> None:
     present = [level for level in levels if level in set(cohort[stratum])]
-    for i, level in enumerate(present):
-        for device, color, offset in DEVICES:
+    xs = np.arange(len(present))
+    for device, color, offset in DEVICES:
+        ys: list[float] = []
+        plot_xs: list[float] = []
+        for i, level in enumerate(present):
             hit = cohort[cohort["device"].eq(device) & cohort[stratum].eq(level)]
             if hit.empty:
                 continue
-            ax.scatter(hit.iloc[0]["mean_hr"], i + offset, color=color, s=88, zorder=3, edgecolors="white", linewidths=0.6)
-    ax.set_yticks(range(len(present)))
-    ax.set_yticklabels(
-        [f"{level}  (n={device_n(cohort, 'smartwatch', stratum, level)}/{device_n(cohort, 'smart-ring', stratum, level)})" for level in present]
+            plot_xs.append(i + offset)
+            ys.append(float(hit.iloc[0]["mean_hr"]))
+        if len(plot_xs) >= 2:
+            ax.plot(plot_xs, ys, color=color, linewidth=1.6, alpha=0.9, zorder=2)
+        ax.scatter(plot_xs, ys, color=color, s=88, zorder=3, edgecolors="white", linewidths=0.6)
+    ax.set_xticks(xs)
+    ax.set_xticklabels(
+        [f"{level}\n(n={device_n(cohort, 'smartwatch', stratum, level)}/{device_n(cohort, 'smart-ring', stratum, level)})" for level in present],
+        rotation=20,
+        ha="right",
     )
-    ax.invert_yaxis()
-    ax.set_xlabel("Mean heart rate (bpm)")
+    ax.set_ylabel("Mean heart rate (bpm)")
     ax.set_title(title)
-    ax.grid(axis="x", alpha=0.25)
+    ax.grid(axis="y", alpha=0.25)
 
 
 def save_participant_context_figure(person: pd.DataFrame, path: Path) -> None:
