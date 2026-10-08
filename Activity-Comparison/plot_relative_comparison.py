@@ -2,7 +2,7 @@
 """Unit-free MOCOPI vs Oura comparison by classroom activity.
 
 Absolute Acc Mag and MET are different physical quantities. This script compares
-*relative* activity instead:
+*relative* activity instead (MOCOPI defaults to right wrist / WristR):
 
   relative = (mean in that class) / (that student's overall school-day mean)
 
@@ -155,7 +155,7 @@ def save_grouped_relative(
         ha="right",
     )
     ax.set_ylabel("Relative activity (class ÷ student's overall mean)")
-    ax.set_title("MOCOPI vs Oura by class (same scale)")
+    ax.set_title("MOCOPI right wrist vs Oura by class (same scale)")
     ax.legend(frameon=False)
     ax.grid(axis="y", alpha=0.25)
     ax.spines["top"].set_visible(False)
@@ -171,7 +171,11 @@ def parse_args() -> argparse.Namespace:
         description="Compare MOCOPI and Oura using relative (unit-free) activity by class."
     )
     parser.add_argument("--epoch-dir", type=Path, default=None)
-    parser.add_argument("--sensor", default=None)
+    parser.add_argument(
+        "--sensor",
+        default="WristR",
+        help="MOCOPI sensor (default: WristR / right wrist).",
+    )
     parser.add_argument(
         "--ring-root",
         type=Path,

@@ -2,7 +2,10 @@
 """MOCOPI accelerometer intensity by classroom activity.
 
 Metric: Intensity = mean Acc_Mag per 1-minute epoch, where
-Acc_Mag = sqrt(X^2 + Y^2 + Z^2). Default averages all body sensors.
+Acc_Mag = sqrt(X^2 + Y^2 + Z^2).
+
+Default uses the right-wrist sensor (WristR) so plots are comparable to
+wrist-worn Oura ring activity.
 """
 from __future__ import annotations
 
@@ -34,6 +37,32 @@ PAPER_CLASS_ORDER = [
 ]
 INVALID_CLASS_LABELS = {"", "DELETE", "NONE", "UNLABELED", "NAN"}
 MOCOPI_COLOR = "#4C78A8"
+DEFAULT_SENSOR = "WristR"
+SENSOR_ALIASES = {
+    "rightwrist": "WristR",
+    "right_wrist": "WristR",
+    "right-wrist": "WristR",
+    "wristr": "WristR",
+    "wrist_r": "WristR",
+    "leftwrist": "WristL",
+    "left_wrist": "WristL",
+    "left-wrist": "WristL",
+    "wristl": "WristL",
+    "wrist_l": "WristL",
+    "anklel": "AnkleL",
+    "ankler": "AnkleR",
+    "leftankle": "AnkleL",
+    "rightankle": "AnkleR",
+}
+
+
+def normalize_sensor(sensor: str | None) -> str | None:
+    if sensor is None:
+        return None
+    key = "".join(ch for ch in sensor.strip().lower() if ch.isalnum() or ch in {"_", "-"})
+    if key in {"all", "bodywide", "body"}:
+        return None
+    return SENSOR_ALIASES.get(key, sensor.strip())
 
 
 def resolve_epoch_dir(explicit: Path | None) -> Path:
@@ -94,20 +123,32 @@ def load_epoch_kinematics(epoch_dir: Path) -> pd.DataFrame:
     df = df.copy()
     df["class_display"] = df["class"].map(display_class_label)
     df = df[df["class_display"].notna()].copy()
-    df["Intensity"] = pd.to_numeric(df["Intensity"], errors="coerce")
+    for col in ("Intensity", "Variability", "Jerk"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     df["Epoch_1Min"] = pd.to_datetime(df["Epoch_1Min"], errors="coerce")
     df = df.dropna(subset=["Intensity", "Epoch_1Min"])
     return df
 
 
 def bodywide_intensity(df: pd.DataFrame, sensor: str | None) -> pd.DataFrame:
+    """Right-wrist (or chosen sensor) minute-level Intensity, plus Variability/Jerk when present."""
+    sensor = normalize_sensor(sensor)
     work = df if sensor is None else df[df["Sensor"] == sensor].copy()
     if work.empty:
-        raise ValueError(f"No rows left after sensor filter ({sensor!r}).")
+        available = sorted(df["Sensor"].dropna().astype(str).unique())
+        raise ValueError(
+            f"No rows left after sensor filter ({sensor!r}). Available: {available}"
+        )
     keys = ["Participant", "Date", "Epoch_1Min", "class_display"]
-    return work.groupby(keys, as_index=False, observed=True).agg(
-        Intensity=("Intensity", "mean")
-    )
+    agg = {"Intensity": ("Intensity", "mean")}
+    if "Variability" in work.columns:
+        agg["Variability"] = ("Variability", "mean")
+    if "Jerk" in work.columns:
+        agg["Jerk"] = ("Jerk", "mean")
+    return work.groupby(keys, as_index=False, observed=True).agg(**{
+        name: pd.NamedAgg(column=col, aggfunc=func) for name, (col, func) in agg.items()
+    })
 
 
 def cohort_means(person: pd.DataFrame, order: list[str]) -> pd.DataFrame:
@@ -127,7 +168,7 @@ def cohort_means(person: pd.DataFrame, order: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def save_by_class(by_class: pd.DataFrame, path: Path) -> None:
+def save_by_class(by_class: pd.DataFrame, path: Path, sensor_label: str) -> None:
     if by_class.empty:
         print(f"[WARN] Skipping class plot; no data for {path.name}")
         return
@@ -147,7 +188,7 @@ def save_by_class(by_class: pd.DataFrame, path: Path) -> None:
     ax.set_yticklabels([f"{row.class_display}  (n={row.n})" for row in by_class.itertuples()])
     ax.invert_yaxis()
     ax.set_xlabel("Acceleration magnitude")
-    ax.set_title("MOCOPI accelerometer by classroom activity")
+    ax.set_title(f"MOCOPI accelerometer by classroom activity ({sensor_label})")
     ax.grid(axis="x", alpha=0.25)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -167,17 +208,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sensor",
-        default=None,
-        help="Optional single sensor (e.g. Head). Default averages all sensors.",
+        default=DEFAULT_SENSOR,
+        help="Sensor placement to plot (default: WristR / right wrist). Use 'all' for body-wide mean.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    sensor = normalize_sensor(args.sensor)
+    sensor_label = "all sensors" if sensor is None else (
+        "right wrist" if sensor == "WristR" else sensor
+    )
     try:
         epoch_dir = resolve_epoch_dir(args.epoch_dir)
-        minutes = bodywide_intensity(load_epoch_kinematics(epoch_dir), args.sensor)
+        minutes = bodywide_intensity(load_epoch_kinematics(epoch_dir), sensor)
     except (FileNotFoundError, ValueError) as exc:
         print(f"[Fatal Error] {exc}")
         sys.exit(1)
@@ -209,8 +254,8 @@ def main() -> None:
         if old.exists():
             old.unlink()
 
-    save_by_class(by_class, out / "intensity_by_class.png")
-    print(f"\n[DONE] Outputs in {out}")
+    save_by_class(by_class, out / "intensity_by_class.png", sensor_label)
+    print(f"\n[DONE] Outputs in {out} (sensor={sensor_label})")
 
 
 if __name__ == "__main__":

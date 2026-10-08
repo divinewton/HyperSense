@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Combined MOCOPI vs Oura activity comparison by classroom activity.
 
+MOCOPI defaults to the right-wrist sensor (WristR) for wrist-to-ring comparability.
 Units differ (acceleration magnitude vs MET), so panels keep separate x-axes.
 Also regenerates the separate MOCOPI and Oura by-class figures.
 """
@@ -56,8 +57,7 @@ def run_device_scripts(args: argparse.Namespace) -> tuple[Path, Path]:
     ]
     if args.epoch_dir is not None:
         mocopi_cmd.extend(["--epoch-dir", str(args.epoch_dir)])
-    if args.sensor:
-        mocopi_cmd.extend(["--sensor", args.sensor])
+    mocopi_cmd.extend(["--sensor", args.sensor])
 
     oura_cmd = [
         sys.executable,
@@ -94,7 +94,7 @@ def save_combined_by_class(mocopi: pd.DataFrame, oura: pd.DataFrame, path: Path)
     y = np.arange(len(classes))
 
     for ax, data, color, title, xlabel in (
-        (axes[0], mocopi_map, MOCOPI_COLOR, "MOCOPI accelerometer", "Acceleration magnitude"),
+        (axes[0], mocopi_map, MOCOPI_COLOR, "MOCOPI right wrist", "Acceleration magnitude"),
         (axes[1], oura_map, OURA_COLOR, "Oura ring", "MET"),
     ):
         means = [float(data.loc[c, "mean"]) if c in data.index else np.nan for c in classes]
@@ -121,7 +121,7 @@ def save_combined_by_class(mocopi: pd.DataFrame, oura: pd.DataFrame, path: Path)
             ax.set_yticklabels([f"{c}  (n={a}/{b})" for c, a, b in zip(classes, nm, no)])
             ax.invert_yaxis()
 
-    fig.suptitle("Activity by classroom activity (MOCOPI vs Oura)", fontsize=12)
+    fig.suptitle("Activity by classroom activity (MOCOPI right wrist vs Oura)", fontsize=12)
     fig.tight_layout()
     fig.savefig(path, dpi=300, bbox_inches="tight")
     plt.close(fig)
@@ -131,7 +131,11 @@ def save_combined_by_class(mocopi: pd.DataFrame, oura: pd.DataFrame, path: Path)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare MOCOPI and Oura activity by class.")
     parser.add_argument("--epoch-dir", type=Path, default=None)
-    parser.add_argument("--sensor", default=None)
+    parser.add_argument(
+        "--sensor",
+        default="WristR",
+        help="MOCOPI sensor (default: WristR / right wrist).",
+    )
     parser.add_argument(
         "--ring-root",
         type=Path,
