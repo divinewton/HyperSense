@@ -170,13 +170,18 @@ def expand_met_day(day: str, met_string: object) -> pd.DataFrame:
     if len(parts) != 1440:
         return pd.DataFrame(columns=["timestamp", "MET"])
     mets = pd.to_numeric(pd.Series(parts), errors="coerce")
-    base = pd.Timestamp(day)
+    # Oura's 1,440 MET samples start at 04:00 local, not midnight.
+    base = pd.Timestamp(day) + pd.Timedelta(hours=4)
     stamps = base + pd.to_timedelta(np.arange(1440), unit="m")
     out = pd.DataFrame({"timestamp": stamps, "MET": mets})
     return out.dropna(subset=["MET"])
 
 
-def load_oura_activity(ring_root: Path, schedule_root: Path) -> pd.DataFrame:
+def load_oura_activity(
+    ring_root: Path,
+    schedule_root: Path,
+    allow_missing_schedule: bool = False,
+) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     for key, dates in participants_dates.items():
         pid = pid_from_key(key)
@@ -189,7 +194,8 @@ def load_oura_activity(ring_root: Path, schedule_root: Path) -> pd.DataFrame:
         sched_fri = load_schedule(friday)
         sched_oth = load_schedule(other)
         sched_tu = load_schedule(tuesday) if tuesday else None
-        if sched_fri.empty and sched_oth.empty:
+        has_schedule = not sched_fri.empty or not sched_oth.empty
+        if not has_schedule and not allow_missing_schedule:
             print(f"[WARN] {pid}: no schedule CSVs found under {schedule_root}")
             continue
 
@@ -204,17 +210,8 @@ def load_oura_activity(ring_root: Path, schedule_root: Path) -> pd.DataFrame:
         available_days = {str(d).strip() for d in daily["day"].dropna().tolist()}
         use_days = available_days & set(dates)
         if not use_days:
-            # Fall back when OrDa days don't match the canonical study calendar.
-            use_days = {
-                d
-                for d in available_days
-                if pd.Timestamp(d).day_name() in {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"}
-            }
-            if use_days:
-                print(
-                    f"[WARN] {pid}: no overlap with study dates {sorted(dates)}; "
-                    f"using OrDa weekdays {sorted(use_days)}"
-                )
+            print(f"[WARN] {pid}: no Oura days overlap study dates {sorted(dates)}")
+            continue
 
         day_frames: list[pd.DataFrame] = []
         for _, row in daily.iterrows():
@@ -224,16 +221,22 @@ def load_oura_activity(ring_root: Path, schedule_root: Path) -> pd.DataFrame:
             minute_df = expand_met_day(day, row[met_col])
             if minute_df.empty:
                 continue
-            sched = schedule_for_date(key, day, sched_fri, sched_oth, sched_tu)
-            secs = (
-                minute_df["timestamp"].dt.hour * 3600
-                + minute_df["timestamp"].dt.minute * 60
-                + minute_df["timestamp"].dt.second
-            )
-            minute_df["class_raw"] = [class_from_schedule(int(s), sched) for s in secs]
-            minute_df["class_display"] = minute_df["class_raw"].map(display_class_label)
+            minute_df["Date"] = minute_df["timestamp"].dt.strftime("%Y-%m-%d")
+            minute_df = minute_df[minute_df["Date"].isin(dates)].copy()
+            if minute_df.empty:
+                continue
+            if has_schedule:
+                sched = schedule_for_date(key, day, sched_fri, sched_oth, sched_tu)
+                secs = (
+                    minute_df["timestamp"].dt.hour * 3600
+                    + minute_df["timestamp"].dt.minute * 60
+                    + minute_df["timestamp"].dt.second
+                )
+                minute_df["class_raw"] = [class_from_schedule(int(s), sched) for s in secs]
+                minute_df["class_display"] = minute_df["class_raw"].map(display_class_label)
+            else:
+                minute_df["class_display"] = pd.NA
             minute_df["Participant"] = pid
-            minute_df["Date"] = day
             day_frames.append(minute_df)
 
         if not day_frames:
@@ -242,12 +245,14 @@ def load_oura_activity(ring_root: Path, schedule_root: Path) -> pd.DataFrame:
 
         part = pd.concat(day_frames, ignore_index=True)
         part = part[part["MET"] > NONWEAR_MET_MAX].copy()
-        part = part[part["class_display"].notna()].copy()
+        if has_schedule:
+            part = part[part["class_display"].notna()].copy()
         if part.empty:
             print(f"[WARN] {pid}: no wear+scheduled MET rows")
             continue
         frames.append(part)
-        print(f"[INFO] {pid}: {len(part):,} scheduled wear minutes")
+        kind = "scheduled wear minutes" if has_schedule else "wear minutes on study dates"
+        print(f"[INFO] {pid}: {len(part):,} {kind}")
 
     columns = ["Participant", "Date", "timestamp", "MET", "class_display"]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=columns)
