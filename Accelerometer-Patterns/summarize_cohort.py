@@ -93,24 +93,38 @@ def main():
         print("[Fatal Error] Could not find 'MOCOPI' folder in Downloads or Documents.")
         sys.exit(1)
 
-    all_epochs = []
-    for folder in sorted(os.listdir(mocopi_dir)):
-        if not re.match(r"^P\d+$", folder):
-            continue
-        folder_path = os.path.join(mocopi_dir, folder)
-        features_file = os.path.join(folder_path, f"{folder}_epoch_kinematics.csv")
-        if os.path.exists(features_file):
-            all_epochs.append(pd.read_csv(features_file))
+    # Prefer the flat epoch_kinematics folder (with P007 wrist rebuild) when present.
+    from pathlib import Path
 
-    if not all_epochs:
-        print(
-            "[Fatal Error] No epoch kinematics files found. "
-            "Run process_and_analyze_mocopi.py first."
-        )
-        sys.exit(1)
+    from plot_by_class_and_time import load_epoch_kinematics, resolve_epoch_dir
 
-    cohort_df = pd.concat(all_epochs, ignore_index=True)
-    print(f"Loaded {len(all_epochs)} participant epoch files from: {mocopi_dir}")
+    try:
+        epoch_dir = resolve_epoch_dir(None)
+        cohort_df = load_epoch_kinematics(epoch_dir)
+        print(f"Loaded epoch kinematics from: {epoch_dir} (P007 wrist rebuild applied)")
+    except FileNotFoundError:
+        all_epochs = []
+        for folder in sorted(os.listdir(mocopi_dir)):
+            if not re.match(r"^P\d+$", folder):
+                continue
+            folder_path = os.path.join(mocopi_dir, folder)
+            features_file = os.path.join(folder_path, f"{folder}_epoch_kinematics.csv")
+            if os.path.exists(features_file):
+                all_epochs.append(pd.read_csv(features_file))
+        if not all_epochs:
+            print(
+                "[Fatal Error] No epoch kinematics files found. "
+                "Run process_and_analyze_mocopi.py first."
+            )
+            sys.exit(1)
+        cohort_df = pd.concat(all_epochs, ignore_index=True)
+        print(f"[WARN] Loaded {len(all_epochs)} files from {mocopi_dir} without P007 rebuild")
+        activity = Path(__file__).resolve().parent.parent / "Activity-Comparison"
+        if str(activity) not in sys.path:
+            sys.path.insert(0, str(activity))
+        from build_p007_wrist import apply_p007_wrist_fix
+
+        cohort_df = apply_p007_wrist_fix(cohort_df, Path(mocopi_dir))
 
     print_section(
         "GLOBAL COHORT SUMMARY: BY SENSOR PLACEMENT",

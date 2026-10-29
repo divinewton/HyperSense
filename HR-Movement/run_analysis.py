@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 import warnings
 from datetime import time
 from pathlib import Path
@@ -293,34 +294,35 @@ def load_movement_epochs(mocopi_root: Path, sensor: str) -> pd.DataFrame:
     Default is the mean across every MOCOPI sensor recording in that minute.
     Hip-only would drop Physical Education for children whose hip channel is
     missing that period (e.g. P001 Friday Funday).
+
+    P007's copied epoch file (identical to P006) is replaced with rebuilt
+    wrist minutes via Accelerometer-Patterns/plot_by_class_and_time.py.
     """
-    frames: list[pd.DataFrame] = []
+    repo = Path(__file__).resolve().parent.parent
+    accel = repo / "Accelerometer-Patterns"
+    if str(accel) not in sys.path:
+        sys.path.insert(0, str(accel))
+    from plot_by_class_and_time import load_epoch_kinematics
+
     use_all = sensor.strip().lower() in {"", "all"}
+    raw = load_epoch_kinematics(mocopi_root)
+    if not use_all:
+        raw = raw[raw["Sensor"].astype(str).eq(sensor)].copy()
+
+    frames: list[pd.DataFrame] = []
     for key, dates in participants_dates.items():
         pid = pid_from_key(key)
-        path = mocopi_root / f"{pid}_epoch_kinematics.csv"
-        if not path.exists():
-            print(f"[WARN] Missing epoch file: {path}")
-            continue
-        raw = pd.read_csv(path)
-        needed = {"Sensor", "Date", "Epoch_1Min", "Intensity"}
-        missing = needed - set(raw.columns)
-        if missing:
-            print(f"[WARN] {path.name} missing columns {sorted(missing)}")
-            continue
-        raw = raw.copy()
-        if not use_all:
-            raw = raw[raw["Sensor"].astype(str).eq(sensor)].copy()
-        if raw.empty:
+        part = raw[raw["Participant"].astype(str).eq(pid)].copy()
+        if part.empty:
             print(f"[WARN] {pid}: no epochs for sensor={sensor}")
             continue
-        raw["timestamp"] = as_pacific(raw["Epoch_1Min"])
-        raw["intensity"] = pd.to_numeric(raw["Intensity"], errors="coerce")
-        raw = raw.dropna(subset=["timestamp", "intensity"])
-        raw["date"] = raw["timestamp"].dt.strftime("%Y-%m-%d")
-        on_study = raw[raw["date"].isin(dates)].copy()
-        extra = sorted(set(raw["date"]) - dates)
-        missing_days = sorted(dates - set(raw["date"]))
+        part["timestamp"] = as_pacific(part["Epoch_1Min"])
+        part["intensity"] = pd.to_numeric(part["Intensity"], errors="coerce")
+        part = part.dropna(subset=["timestamp", "intensity"])
+        part["date"] = part["timestamp"].dt.strftime("%Y-%m-%d")
+        on_study = part[part["date"].isin(dates)].copy()
+        extra = sorted(set(part["date"]) - dates)
+        missing_days = sorted(dates - set(part["date"]))
         if on_study.empty:
             print(
                 f"[INFO] {pid}: 0 movement minutes on study dates "

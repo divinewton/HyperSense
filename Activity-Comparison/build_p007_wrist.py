@@ -192,3 +192,63 @@ def build_p007_wrist(
     ).agg(Intensity=("Intensity", "mean"), Variability=("Variability", "mean"), Jerk=("Jerk", "mean"))
     mean["Sensor"] = "WristMean"
     return mean, frames
+
+
+def p007_as_epoch_rows(mean_minutes: pd.DataFrame) -> pd.DataFrame:
+    """Convert rebuilt P007 wrist minutes into epoch_kinematics schema.
+
+    Both unknown-side serials are stored as WristR and WristL so right-wrist
+    and body-wide loaders pick them up. Values are identical (serial mean).
+    """
+    if mean_minutes.empty:
+        return pd.DataFrame()
+    rows = []
+    for sensor in ("WristR", "WristL"):
+        part = mean_minutes.copy()
+        part["Sensor"] = sensor
+        part["class"] = part["class_display"]
+        part["Participant"] = "P007"
+        part["Epoch_1Min"] = pd.to_datetime(part["Epoch_1Min"], errors="coerce")
+        part["Date"] = pd.to_datetime(part["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        part["Hour"] = part["Epoch_1Min"].dt.hour
+        part["Is_Active"] = (part["Intensity"] > 1.15).astype(int)
+        rows.append(
+            part[
+                [
+                    "Sensor",
+                    "Date",
+                    "class",
+                    "Epoch_1Min",
+                    "Intensity",
+                    "Variability",
+                    "Jerk",
+                    "Is_Active",
+                    "Participant",
+                    "Hour",
+                ]
+            ]
+        )
+    return pd.concat(rows, ignore_index=True)
+
+
+def apply_p007_wrist_fix(
+    epochs: pd.DataFrame,
+    epoch_dir: Path,
+    raw_root: Path | None = None,
+) -> pd.DataFrame:
+    """Drop the copied P007 epoch file and inject rebuilt wrist minutes."""
+    raw_root = Path.home() / "Downloads" / "P007" if raw_root is None else raw_root
+    work = epochs[epochs["Participant"].astype(str) != "P007"].copy()
+    if not raw_root.is_dir():
+        print(f"[WARN] P007 raw folder missing ({raw_root}); excluding copied P007 epochs")
+        return work
+    mean, _serials = build_p007_wrist(raw_root, epoch_dir)
+    rebuilt = p007_as_epoch_rows(mean)
+    if rebuilt.empty:
+        print("[WARN] P007 wrist rebuild produced no minutes; excluding copied P007 epochs")
+        return work
+    print(
+        f"[INFO] P007: replaced copied epoch file with rebuilt wrist minutes "
+        f"({len(mean):,} minutes from serials {', '.join(WRIST_SERIALS)})"
+    )
+    return pd.concat([work, rebuilt], ignore_index=True)

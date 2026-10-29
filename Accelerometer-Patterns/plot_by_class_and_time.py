@@ -100,7 +100,18 @@ def ordered_class_labels(labels: list[str]) -> list[str]:
     return ordered + extras
 
 
-def load_epoch_kinematics(epoch_dir: Path) -> pd.DataFrame:
+def load_epoch_kinematics(
+    epoch_dir: Path,
+    *,
+    fix_p007: bool = True,
+    raw_p007: Path | None = None,
+) -> pd.DataFrame:
+    """Load cohort epoch kinematics.
+
+    P007's on-disk epoch file is a relabeled copy of P006. When ``fix_p007``
+    is True (default), that file is dropped and replaced with wrist minutes
+    rebuilt from P007's raw serials (see Activity-Comparison/build_p007_wrist.py).
+    """
     frames: list[pd.DataFrame] = []
     for path in sorted(epoch_dir.glob("*_epoch_kinematics.csv")):
         frames.append(pd.read_csv(path))
@@ -119,6 +130,14 @@ def load_epoch_kinematics(epoch_dir: Path) -> pd.DataFrame:
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Epoch files missing columns: {sorted(missing)}")
+
+    if fix_p007:
+        activity_comparison = Path(__file__).resolve().parent.parent / "Activity-Comparison"
+        if str(activity_comparison) not in sys.path:
+            sys.path.insert(0, str(activity_comparison))
+        from build_p007_wrist import apply_p007_wrist_fix
+
+        df = apply_p007_wrist_fix(df, epoch_dir, raw_p007)
 
     df = df.copy()
     df["class_display"] = df["class"].map(display_class_label)

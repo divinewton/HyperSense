@@ -71,15 +71,16 @@ def load_swan(path,crosswalk):
     return pd.DataFrame(rows)
 
 def load_mocopi(root: Path):
-    files=sorted(set(root.glob("P*_epoch_kinematics.csv"))|set(root.glob("P*/P*_epoch_kinematics.csv")))
-    if not files: raise FileNotFoundError("No P###_epoch_kinematics.csv files found.")
-    frames=[]
-    for f in files:
-        d=pd.read_csv(f,low_memory=False); req={"Participant","Sensor","Intensity","Jerk","class"}
-        if req-set(d): raise ValueError(f"{f.name} is missing required epoch columns.")
-        for c in ["Intensity","Jerk"]: d[c]=pd.to_numeric(d[c],errors="coerce")
-        frames.append(d.dropna(subset=["Participant","Sensor","Intensity","Jerk"]))
-    return pd.concat(frames,ignore_index=True)
+    # P007's epoch file is a copy of P006; shared loader rebuilds wrist minutes.
+    import sys
+    accel=Path(__file__).resolve().parent.parent/"Accelerometer-Patterns"
+    if str(accel) not in sys.path: sys.path.insert(0,str(accel))
+    from plot_by_class_and_time import load_epoch_kinematics
+    d=load_epoch_kinematics(root)
+    req={"Participant","Sensor","Intensity","Jerk","class"}
+    if req-set(d): raise ValueError("Epoch kinematics missing required columns after P007 fix.")
+    for c in ["Intensity","Jerk"]: d[c]=pd.to_numeric(d[c],errors="coerce")
+    return d.dropna(subset=["Participant","Sensor","Intensity","Jerk"])
 
 def corr_table(data, features, scores, family, rng):
     rows=[]

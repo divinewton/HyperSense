@@ -33,6 +33,19 @@ OURA_COLOR = "#E37400"
 LUNCH_START = time(11, 30)
 LUNCH_END = time(13, 30)
 
+# Oura class_5_min: one character per 5-minute bin on the 04:00-local day.
+# Official codes (cloud.ouraring.com): 0 non-wear, 1 rest, 2 inactive,
+# 3 low activity, 4 medium activity, 5 high activity.
+OURA_CLASS_BINS_PER_DAY = 288
+OURA_CLASS_MIN_LEN = 180  # shorter strings are truncated/corrupt exports
+OURA_CLASS_LABELS = {
+    1: "Rest",
+    2: "Inactive",
+    3: "Low activity",
+    4: "Medium activity",
+    5: "High activity",
+}
+
 DISPLAY_CLASS_LABELS = {
     "Homework Reinforcement/Study Hall": "HW Rein./Study Hall",
     "Study Hall": "HW Rein./Study Hall",
@@ -175,6 +188,111 @@ def expand_met_day(day: str, met_string: object) -> pd.DataFrame:
     stamps = base + pd.to_timedelta(np.arange(1440), unit="m")
     out = pd.DataFrame({"timestamp": stamps, "MET": mets})
     return out.dropna(subset=["MET"])
+
+
+def expand_class_5_min_day(day: str, class_string: object) -> pd.DataFrame:
+    """Expand Oura class_5_min into one row per 5-minute bin.
+
+    These OrDaLabeled exports strip leading non-wear ``0`` characters. Pad back
+    to 288 bins so index 0 is 04:00 local (same day origin as met_1_min).
+    """
+    raw = str(class_string).strip()
+    if not raw or raw.lower() in {"nan", "none"}:
+        return pd.DataFrame(columns=["BinStart", "oura_class"])
+    if not raw.isdigit():
+        return pd.DataFrame(columns=["BinStart", "oura_class"])
+    if len(raw) < OURA_CLASS_MIN_LEN or len(raw) > OURA_CLASS_BINS_PER_DAY:
+        return pd.DataFrame(columns=["BinStart", "oura_class"])
+
+    padded = ("0" * (OURA_CLASS_BINS_PER_DAY - len(raw))) + raw
+    classes = pd.to_numeric(pd.Series(list(padded)), errors="coerce")
+    base = pd.Timestamp(day) + pd.Timedelta(hours=4)
+    stamps = base + pd.to_timedelta(np.arange(OURA_CLASS_BINS_PER_DAY) * 5, unit="m")
+    out = pd.DataFrame({"BinStart": stamps, "oura_class": classes})
+    return out.dropna(subset=["oura_class"])
+
+
+def load_oura_class_5min(
+    ring_root: Path,
+    schedule_root: Path,
+    allow_missing_schedule: bool = False,
+) -> pd.DataFrame:
+    """Load Oura 5-minute activity class (1–5) on study dates.
+
+    Drops non-wear (0). When schedule CSVs exist, keeps scheduled class periods
+    only (same rules as the MET loader).
+    """
+    frames: list[pd.DataFrame] = []
+    for key, dates in participants_dates.items():
+        pid = pid_from_key(key)
+        path = ring_root / pid / f"{pid}OrDaLabeled.csv"
+        if not path.exists():
+            print(f"[WARN] Missing Oura activity file: {path}")
+            continue
+
+        friday, other, tuesday = schedule_paths(key, schedule_root)
+        sched_fri = load_schedule(friday)
+        sched_oth = load_schedule(other)
+        sched_tu = load_schedule(tuesday) if tuesday else None
+        has_schedule = not sched_fri.empty or not sched_oth.empty
+        if not has_schedule and not allow_missing_schedule:
+            print(f"[WARN] {pid}: no schedule CSVs found under {schedule_root}")
+            continue
+
+        daily = pd.read_csv(path)
+        if "day" not in daily.columns or "class_5_min" not in daily.columns:
+            print(f"[WARN] {pid}: no class_5_min column in {path.name}")
+            continue
+
+        available_days = {str(d).strip() for d in daily["day"].dropna().tolist()}
+        use_days = available_days & set(dates)
+        if not use_days:
+            print(f"[WARN] {pid}: no Oura days overlap study dates {sorted(dates)}")
+            continue
+
+        day_frames: list[pd.DataFrame] = []
+        for _, row in daily.iterrows():
+            day = str(row["day"]).strip()
+            if day not in use_days:
+                continue
+            bin_df = expand_class_5_min_day(day, row["class_5_min"])
+            if bin_df.empty:
+                continue
+            bin_df["Date"] = bin_df["BinStart"].dt.strftime("%Y-%m-%d")
+            bin_df = bin_df[bin_df["Date"].isin(dates)].copy()
+            if bin_df.empty:
+                continue
+            if has_schedule:
+                sched = schedule_for_date(key, day, sched_fri, sched_oth, sched_tu)
+                secs = (
+                    bin_df["BinStart"].dt.hour * 3600
+                    + bin_df["BinStart"].dt.minute * 60
+                    + bin_df["BinStart"].dt.second
+                )
+                bin_df["class_raw"] = [class_from_schedule(int(s), sched) for s in secs]
+                bin_df["class_display"] = bin_df["class_raw"].map(display_class_label)
+            else:
+                bin_df["class_display"] = pd.NA
+            bin_df["Participant"] = pid
+            day_frames.append(bin_df)
+
+        if not day_frames:
+            print(f"[WARN] {pid}: no study-day class_5_min rows after expand")
+            continue
+
+        part = pd.concat(day_frames, ignore_index=True)
+        part = part[part["oura_class"].between(1, 5)].copy()
+        if has_schedule:
+            part = part[part["class_display"].notna()].copy()
+        if part.empty:
+            print(f"[WARN] {pid}: no wear+scheduled class_5_min rows")
+            continue
+        frames.append(part)
+        kind = "scheduled class bins" if has_schedule else "class bins on study dates"
+        print(f"[INFO] {pid}: {len(part):,} {kind}")
+
+    columns = ["Participant", "Date", "BinStart", "oura_class", "class_display"]
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=columns)
 
 
 def load_oura_activity(

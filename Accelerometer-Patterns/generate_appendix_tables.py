@@ -1,4 +1,7 @@
 import os
+import sys
+from pathlib import Path
+
 import pandas as pd
 
 # --- CONFIG ---
@@ -6,18 +9,12 @@ EPOCH_DIR = "/Users/divinewton/Downloads/epoch_kinematics"
 
 SENSORS = ["AnkleL", "AnkleR", "Head", "Hip", "WristL", "WristR"]
 
-# --- STEP 1: Load every *_epoch_kinematics.csv in the folder ---
-all_epochs = []
-for filename in os.listdir(EPOCH_DIR):
-    if filename.endswith("_epoch_kinematics.csv"):
-        all_epochs.append(pd.read_csv(os.path.join(EPOCH_DIR, filename)))
+# P007's on-disk epoch file is a copy of P006; rebuild wrist minutes.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from plot_by_class_and_time import load_epoch_kinematics
 
-if not all_epochs:
-    print(f"No epoch files found in: {EPOCH_DIR}")
-    raise SystemExit(1)
-
-df = pd.concat(all_epochs, ignore_index=True)
-print(f"Loaded {len(all_epochs)} participant files from {EPOCH_DIR}\n")
+df = load_epoch_kinematics(Path(EPOCH_DIR))
+print(f"Loaded epoch kinematics from {EPOCH_DIR} (P007 wrist rebuild applied)\n")
 
 # --- STEP 2: Add day of week from Date ---
 df["Date"] = pd.to_datetime(df["Date"])
